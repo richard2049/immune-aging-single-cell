@@ -1,0 +1,51 @@
+cfg_path: config/config.demo.yaml
+
+project:
+  name: immune_aging_scvi
+  out_dir: results
+
+run:
+  # demo_pbmc3k (small) or custom_h5ad (real data you place in data/raw)
+  dataset: demo_pbmc3k
+
+paths:
+  # used when dataset=custom_h5ad
+  input_h5ad: data/raw/input.h5ad
+
+qc:
+  min_genes_per_cell: 200
+  min_cells_per_gene: 3
+  n_genes_upper_quantile: 0.98
+  max_pct_counts_mt: 20
+  # ribo detection will use gene name prefixes by default (RPL/RPS)
+  max_pct_counts_ribo: 50
+
+doublets:
+  enabled: true
+  dif_threshold: 0.5
+  hvg_top: 2000
+  filter_genes_min_cells: 3
+  hvg_flavor: seurat_v3
+
+scvi:
+  layer: counts
+  categorical_covariates: []
+  continuous_covariates: ["pct_counts_mt", "total_counts", "pct_counts_ribo"]
+  accelerator: gpu
+  devices: 1
+
+clustering:
+  use_rep: X_scVI
+  leiden_resolution: 0.8
+
+celltypist:
+  model: Immune_All_Low.pkl
+  majority_voting: true
+
+report:
+  dpi: 150
+  max_celltypes_plot: 20
+
+analysis:
+  # expects obs column "age" for real aging datasets
+  age_bins: [25, 35, 45, 55, 65, 75, 85]

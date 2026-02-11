@@ -1,0 +1,20 @@
+# data + outputs
+data/raw/
+results/
+*.h5ad
+*.h5
+*.loom
+*.mtx
+*.mtx.gz
+
+# python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+.env/
+
+# docs assets (allow curated showcase images)
+!docs/assets/
+docs/assets/*
+!docs/assets/.gitkeep

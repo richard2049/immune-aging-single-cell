@@ -1,0 +1,70 @@
+OUT = config["project"]["out_dir"]
+CFG = config["cfg_path"]
+
+rule all:
+    input:
+        f"{OUT}/reports.done"
+
+rule ingest:
+    output:
+        f"{OUT}/01_raw.h5ad"
+    shell:
+        "python -m src.ingest --config {CFG} --out {output}"
+
+rule qc:
+    input:
+        f"{OUT}/01_raw.h5ad"
+    output:
+        f"{OUT}/02_qc.h5ad"
+    shell:
+        "python -m src.qc --config {CFG} --inp {input} --out {output}"
+
+rule doublets:
+    input:
+        f"{OUT}/02_qc.h5ad"
+    output:
+        f"{OUT}/03_nodoublets.h5ad"
+    shell:
+        "python -m src.doublets_solo --config {CFG} --inp {input} --out {output}"
+
+rule scvi_train:
+    input:
+        f"{OUT}/03_nodoublets.h5ad"
+    output:
+        f"{OUT}/04_scvi.h5ad"
+    shell:
+        "python -m src.scvi_train --config {CFG} --inp {input} --out {output}"
+
+rule cluster:
+    input:
+        f"{OUT}/04_scvi.h5ad"
+    output:
+        f"{OUT}/05_clustered.h5ad"
+    shell:
+        "python -m src.cluster --config {CFG} --inp {input} --out {output}"
+
+rule annotate:
+    input:
+        f"{OUT}/05_clustered.h5ad"
+    output:
+        f"{OUT}/06_annotated.h5ad"
+    shell:
+        "python -m src.annotate_celltypist --config {CFG} --inp {input} --out {output}"
+
+rule report:
+    input:
+        f"{OUT}/06_annotated.h5ad"
+    output:
+        done=f"{OUT}/reports.done",
+        umap_leiden=f"{OUT}/figures/umap_leiden.png",
+        umap_cell_type=f"{OUT}/figures/umap_cell_type.png",
+        qc_distributions=f"{OUT}/figures/qc_distributions.png",
+        cell_type_composition=f"{OUT}/figures/cell_type_composition.png",
+        cell_type_counts=f"{OUT}/tables/cell_type_counts.csv",
+        cell_type_fractions=f"{OUT}/tables/cell_type_fractions.csv",
+        cluster_celltype_crosstab=f"{OUT}/tables/cluster_celltype_crosstab.csv"
+    shell:
+        (
+            "python -m src.report --config {CFG} --inp {input} "
+            "--figdir {OUT}/figures --tabledir {OUT}/tables --done {output.done}"
+        )
