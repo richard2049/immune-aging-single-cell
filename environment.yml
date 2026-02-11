@@ -1,0 +1,48 @@
+# environment.yml
+# Reproducible environment for the immune-aging-scvi subproject.
+# Default: CPU-only PyTorch (portable). For GPU, see docs/troubleshooting.md.
+
+name: immune-aging-scvi
+
+channels:
+  - conda-forge
+  - bioconda
+  - pytorch
+  - nodefaults
+
+dependencies:
+  # --- Python ---
+  - python=3.10
+  - pip
+  - pyyaml
+
+  # --- Core scientific stack ---
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+
+  # --- Single-cell stack ---
+  - anndata
+  - scanpy
+  - umap-learn
+  - python-igraph
+  - leidenalg
+  - h5py
+  - pytables
+
+  # --- Workflow / plotting ---
+  - snakemake-minimal
+  - matplotlib
+
+  # --- PyTorch (CPU default; swap for CUDA build if needed) ---
+  - pytorch
+  - torchvision
+  - torchaudio
+  - cpuonly
+
+  # --- PyPI packages ---
+  - pip:
+      - scvi-tools
+      - celltypist
+      - scikit-misc

@@ -1,0 +1,121 @@
+Building DAG of jobs...
+Provided cores: 1 (use --cores to define parallelism)
+Rules claiming more threads will be scaled down.
+Job stats:
+job           count
+----------  -------
+all               1
+annotate          1
+cluster           1
+doublets          1
+ingest            1
+qc                1
+report            1
+scvi_train        1
+total             8
+
+Select jobs to execute...
+
+[Thu Feb 12 00:15:01 2026]
+rule ingest:
+    output: results/01_raw.h5ad
+    jobid: 7
+    reason: Missing output files: results/01_raw.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:15:08 2026]
+Finished job 7.
+1 of 8 steps (12%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:15:09 2026]
+rule qc:
+    input: results/01_raw.h5ad
+    output: results/02_qc.h5ad
+    jobid: 6
+    reason: Missing output files: results/02_qc.h5ad; Input files updated by another job: results/01_raw.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:15:18 2026]
+Finished job 6.
+2 of 8 steps (25%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:15:18 2026]
+rule doublets:
+    input: results/02_qc.h5ad
+    output: results/03_nodoublets.h5ad
+    jobid: 5
+    reason: Missing output files: results/03_nodoublets.h5ad; Input files updated by another job: results/02_qc.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:19:08 2026]
+Finished job 5.
+3 of 8 steps (38%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:19:08 2026]
+rule scvi_train:
+    input: results/03_nodoublets.h5ad
+    output: results/04_scvi.h5ad
+    jobid: 4
+    reason: Missing output files: results/04_scvi.h5ad; Input files updated by another job: results/03_nodoublets.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:21:36 2026]
+Finished job 4.
+4 of 8 steps (50%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:21:36 2026]
+rule cluster:
+    input: results/04_scvi.h5ad
+    output: results/05_clustered.h5ad
+    jobid: 3
+    reason: Missing output files: results/05_clustered.h5ad; Input files updated by another job: results/04_scvi.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:21:56 2026]
+Finished job 3.
+5 of 8 steps (62%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:21:56 2026]
+rule annotate:
+    input: results/05_clustered.h5ad
+    output: results/06_annotated.h5ad
+    jobid: 2
+    reason: Missing output files: results/06_annotated.h5ad; Input files updated by another job: results/05_clustered.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:22:05 2026]
+Finished job 2.
+6 of 8 steps (75%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:22:05 2026]
+rule report:
+    input: results/06_annotated.h5ad
+    output: results/reports.done, results/figures/umap_leiden.png, results/figures/umap_cell_type.png, results/figures/qc_distributions.png, results/figures/cell_type_composition.png, results/tables/cell_type_counts.csv, results/tables/cell_type_fractions.csv, results/tables/cluster_celltype_crosstab.csv
+    jobid: 1
+    reason: Missing output files: results/reports.done; Input files updated by another job: results/06_annotated.h5ad
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+Warning: the following output files of rule report were not present when the DAG was created:
+{'results/reports.done'}
+[Thu Feb 12 00:22:14 2026]
+Finished job 1.
+7 of 8 steps (88%) done
+Select jobs to execute...
+
+[Thu Feb 12 00:22:14 2026]
+localrule all:
+    input: results/reports.done
+    jobid: 0
+    reason: Input files updated by another job: results/reports.done
+    resources: tmpdir=C:\Users\Usuario\AppData\Local\Temp
+
+[Thu Feb 12 00:22:14 2026]
+Finished job 0.
+8 of 8 steps (100%) done
+Complete log: .snakemake\log\2026-02-12T001501.606803.snakemake.log
