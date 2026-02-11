@@ -18,3 +18,5 @@ __pycache__/
 !docs/assets/
 docs/assets/*
 !docs/assets/.gitkeep
+
+.snakemake/
