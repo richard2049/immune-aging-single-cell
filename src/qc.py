@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
+import shutil
 import numpy as np
 import scanpy as sc
 import scipy.sparse as sp
 
-from .utils import load_config
+from .utils import ensure_dir, load_config
 
 
 def main() -> None:
@@ -18,12 +21,24 @@ def main() -> None:
     cfg = load_config(args.config)
     qc = cfg["qc"]
 
+    # Large-data passthrough mode: skip in-memory QC computations.
+    if not bool(qc.get("enabled", True)):
+        in_path = Path(args.inp).resolve()
+        out_path = Path(args.out).resolve()
+        ensure_dir(out_path.parent)
+        if out_path.exists():
+            out_path.unlink()
+        try:
+            os.link(in_path, out_path)
+        except OSError:
+            shutil.copy2(in_path, out_path)
+        return
+
     adata = sc.read_h5ad(args.inp)
 
-    # Ensure sparse counts + keep raw counts in layers["counts"]
+    # Ensure sparse matrix representation before QC operations.
     if not sp.issparse(adata.X):
         adata.X = sp.csr_matrix(adata.X)
-    adata.layers["counts"] = adata.X.copy()
 
     # mt + ribo flags (portable defaults)
     adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
@@ -46,9 +61,15 @@ def main() -> None:
         float(qc["n_genes_upper_quantile"]),
     )
 
-    adata = adata[adata.obs["n_genes_by_counts"] < upper_lim].copy()
-    adata = adata[adata.obs["pct_counts_mt"] < float(qc["max_pct_counts_mt"])].copy()
-    adata = adata[adata.obs["pct_counts_ribo"] < float(qc["max_pct_counts_ribo"])].copy()
+    obs_mask = (
+        (adata.obs["n_genes_by_counts"] < upper_lim)
+        & (adata.obs["pct_counts_mt"] < float(qc["max_pct_counts_mt"]))
+        & (adata.obs["pct_counts_ribo"] < float(qc["max_pct_counts_ribo"]))
+    )
+    adata = adata[obs_mask].copy()
+
+    # Store filtered raw counts for downstream scVI setup.
+    adata.layers["counts"] = adata.X.copy()
 
     adata.write_h5ad(args.out)
 

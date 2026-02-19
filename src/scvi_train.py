@@ -18,20 +18,25 @@ def main() -> None:
     cfg = load_config(args.config)
     scvicfg = cfg["scvi"]
     out_dir = cfg["project"]["out_dir"]
+    layer = scvicfg.get("layer")
+    if layer in ("", "null", "None"):
+        layer = None
 
     ensure_dir(f"{out_dir}/models")
 
     adata = sc.read_h5ad(args.inp)
 
-    # Ensure sparse counts layer exists
-    if "counts" not in adata.layers:
-        if not sp.issparse(adata.X):
-            adata.X = sp.csr_matrix(adata.X)
-        adata.layers["counts"] = adata.X.copy()
+    # Ensure sparse representation for memory efficiency.
+    if not sp.issparse(adata.X):
+        adata.X = sp.csr_matrix(adata.X)
+
+    # Create a dedicated layer only when explicitly requested.
+    if layer is not None and layer not in adata.layers:
+        adata.layers[layer] = adata.X.copy()
 
     scvi.model.SCVI.setup_anndata(
         adata,
-        layer=scvicfg["layer"],
+        layer=layer,
         categorical_covariate_keys=scvicfg["categorical_covariates"],
         continuous_covariate_keys=scvicfg["continuous_covariates"],
     )
