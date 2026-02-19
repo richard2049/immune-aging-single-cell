@@ -1,15 +1,19 @@
-cfg_path: config/config.real.yml
+cfg_path: config/config.real.full.yml
 
 project:
   name: immune_aging_scvi
-  out_dir: results/gse164378_pilot
-  # out_dir: results/gse164378_full
+  # 25k  -> results/gse164378_25k
+  # 100k -> results/gse164378_100k
+  # full -> results/gse164378_full
+  out_dir: results/gse164378_full
 
 run:
   dataset: custom_h5ad
-  # Pilot mode for very large datasets: ingest randomly samples this many cells.
-  # Remove or set null for full-size runs.
-  max_cells: 50000
+  # Controlled scaling:
+  # 25k  -> max_cells: 25000
+  # 100k -> max_cells: 100000
+  # full -> max_cells: null
+  max_cells: 500000
   seed: 42
 
 paths:
@@ -34,6 +38,10 @@ metadata:
   donor_index: 1
 
 qc:
+  # full mode on consumer hardware: skip QC step to avoid loading all X in RAM.
+  # 25k/100k: true
+  # full: false
+  enabled: false
   min_genes_per_cell: 200
   min_cells_per_gene: 3
   n_genes_upper_quantile: 0.98
@@ -41,7 +49,9 @@ qc:
   max_pct_counts_ribo: 50
 
 doublets:
-  # Keep off for the first large-data pilot run.
+  # Recommendation:
+  # 25k/100k -> false
+  # full     -> keep false initially, enable only if resources allow
   enabled: false
   dif_threshold: 0.5
   hvg_top: 2000
@@ -49,9 +59,17 @@ doublets:
   hvg_flavor: seurat_v3
 
 scvi:
-  layer: counts
-  categorical_covariates: []   # set later after checking obs columns (e.g. ["batch"])
-  continuous_covariates: ["pct_counts_mt", "total_counts", "pct_counts_ribo"]
+  # Use X directly in full mode to avoid duplicating counts layer in memory.
+  # 25k/100k: counts
+  # full: null
+  layer: null
+  # Only set these if columns exist in adata.obs.
+  # Example: ["batch"] or ["batch", "donor_id"]
+  categorical_covariates: []
+  # If qc.enabled=false, these columns are usually unavailable.
+  continuous_covariates: []
+  # 25k/100k: CPU is recommended
+  # full: switch to GPU only after CUDA is validated
   accelerator: gpu
   devices: 1
 
@@ -60,25 +78,31 @@ clustering:
   leiden_resolution: 0.8
 
 celltypist:
+  # For full mode, enable only after confirming available RAM.
   enabled: true
   model: Immune_All_Low.pkl
   majority_voting: false
-  chunk_size: 5000
+  # Stage recommendations:
+  # 25k  -> 2000
+  # 100k -> 5000
+  # full -> 10000 (if RAM allows)
+  chunk_size: 10000
   normalize_target_sum: 10000
 
 report:
   dpi: 180
   max_celltypes_plot: 25
-  label_obs: auto
+  # "auto" falls back to leiden if cell_type is unavailable in full mode.
+  label_obs: cell_type
 
 composition_age:
   age_col: age
   donor_col: donor_id_y
   celltype_col: cell_type
-  min_cells_per_donor: 200
-  min_donors_per_celltype: 8
-  top_n_celltypes: 12
-  top_n_trends: 8
+  min_cells_per_donor: 500
+  min_donors_per_celltype: 12
+  top_n_celltypes: 14
+  top_n_trends: 10
   dpi: 180
 
 signature_age:
@@ -88,12 +112,12 @@ signature_age:
   sex_col: sex
   normalize_target_sum: 10000
   assume_log1p: false
-  max_cells_for_scoring: 200000
+  max_cells_for_scoring: 150000
   min_genes_present: 3
-  min_cells_per_group: 50
-  min_donors_per_celltype: 8
-  min_age_span: 10
-  top_n_panels: 8
+  min_cells_per_group: 80
+  min_donors_per_celltype: 12
+  min_age_span: 12
+  top_n_panels: 10
   dpi: 180
 
 age_prediction:
@@ -101,8 +125,8 @@ age_prediction:
   age_col: age
   donor_col: donor_id_y
   celltype_col: cell_type
-  max_cells_for_aggregation: 250000
-  min_cells_per_group: 50
+  max_cells_for_aggregation: 200000
+  min_cells_per_group: 80
   cv_folds: 5
   model_order: ["ridge", "xgboost"]
   ridge_alphas: [0.1, 1.0, 10.0, 100.0]
@@ -112,9 +136,8 @@ age_prediction:
   bootstrap_iterations: 5000
   bootstrap_ci: 0.95
   n_jobs: -1
-  top_n_celltypes_plot: 12
+  top_n_celltypes_plot: 14
   dpi: 180
 
 analysis:
-  # expects obs column "age" for aging analyses
   age_bins: [25, 35, 45, 55, 65, 75, 85]

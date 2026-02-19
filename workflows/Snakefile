@@ -3,7 +3,20 @@ CFG = config["cfg_path"]
 
 rule all:
     input:
-        f"{OUT}/reports.done"
+        f"{OUT}/reports.done",
+        f"{OUT}/figures/age_celltype_composition_by_bin.png",
+        f"{OUT}/figures/age_celltype_top_trends.png",
+        f"{OUT}/tables/age_celltype_fraction_by_donor.csv",
+        f"{OUT}/tables/age_celltype_trend_stats.csv",
+        f"{OUT}/figures/signature_age_heatmap.png",
+        f"{OUT}/figures/signature_age_top_associations.png",
+        f"{OUT}/tables/signature_scores_by_donor_celltype.csv",
+        f"{OUT}/tables/signature_age_associations.csv",
+        f"{OUT}/figures/age_pred_observed_vs_predicted.png",
+        f"{OUT}/figures/age_pred_mae_by_celltype.png",
+        f"{OUT}/tables/age_pred_cv_predictions.csv",
+        f"{OUT}/tables/age_pred_metrics.csv",
+        f"{OUT}/tables/age_pred_model_comparison_summary.csv"
 
 rule ingest:
     output:
@@ -11,9 +24,17 @@ rule ingest:
     shell:
         "python -m src.ingest --config {CFG} --out {output}"
 
-rule qc:
+rule metadata:
     input:
         f"{OUT}/01_raw.h5ad"
+    output:
+        f"{OUT}/01_meta.h5ad"
+    shell:
+        "python -m src.metadata_integrate --config {CFG} --inp {input} --out {output}"
+
+rule qc:
+    input:
+        f"{OUT}/01_meta.h5ad"
     output:
         f"{OUT}/02_qc.h5ad"
     shell:
@@ -67,4 +88,56 @@ rule report:
         (
             "python -m src.report --config {CFG} --inp {input} "
             "--figdir {OUT}/figures --tabledir {OUT}/tables --done {output.done}"
+        )
+
+
+rule composition_age:
+    input:
+        f"{OUT}/06_annotated.h5ad"
+    output:
+        fig_composition=f"{OUT}/figures/age_celltype_composition_by_bin.png",
+        fig_trends=f"{OUT}/figures/age_celltype_top_trends.png",
+        table_fraction=f"{OUT}/tables/age_celltype_fraction_by_donor.csv",
+        table_trends=f"{OUT}/tables/age_celltype_trend_stats.csv"
+    shell:
+        (
+            "python -m src.composition_age --config {CFG} --inp {input} "
+            "--fig-fractions {output.fig_composition} --fig-trends {output.fig_trends} "
+            "--table-donor-fractions {output.table_fraction} --table-trends {output.table_trends}"
+        )
+
+
+rule signature_age:
+    input:
+        f"{OUT}/06_annotated.h5ad"
+    output:
+        fig_heatmap=f"{OUT}/figures/signature_age_heatmap.png",
+        fig_top=f"{OUT}/figures/signature_age_top_associations.png",
+        table_scores=f"{OUT}/tables/signature_scores_by_donor_celltype.csv",
+        table_assoc=f"{OUT}/tables/signature_age_associations.csv",
+        table_sigmeta=f"{OUT}/tables/signature_gene_coverage.csv"
+    shell:
+        (
+            "python -m src.signature_age --config {CFG} --inp {input} "
+            "--fig-heatmap {output.fig_heatmap} --fig-top {output.fig_top} "
+            "--table-scores {output.table_scores} --table-assoc {output.table_assoc} "
+            "--table-signature-meta {output.table_sigmeta}"
+        )
+
+
+rule age_prediction:
+    input:
+        f"{OUT}/06_annotated.h5ad"
+    output:
+        fig_pred=f"{OUT}/figures/age_pred_observed_vs_predicted.png",
+        fig_mae=f"{OUT}/figures/age_pred_mae_by_celltype.png",
+        table_pred=f"{OUT}/tables/age_pred_cv_predictions.csv",
+        table_metrics=f"{OUT}/tables/age_pred_metrics.csv",
+        table_summary=f"{OUT}/tables/age_pred_model_comparison_summary.csv"
+    shell:
+        (
+            "python -m src.age_prediction --config {CFG} --inp {input} "
+            "--fig-pred {output.fig_pred} --fig-mae {output.fig_mae} "
+            "--table-pred {output.table_pred} --table-metrics {output.table_metrics} "
+            "--table-summary {output.table_summary}"
         )
