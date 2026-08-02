@@ -221,3 +221,13 @@ Detailed schema + ingestion notes: `docs/real_data.md`.
 - Store figures referenced by the README under `docs/assets/`
   (`.png/.jpg/.jpeg/.webp`).
 - Keep `.snakemake/`, raw downloads, and generated artifacts out of version control.
+
+## Citation
+Citation metadata for release `v0.1.0` is provided in
+[`CITATION.cff`](CITATION.cff).
+
+## License
+Unless otherwise noted, original code and documentation in this repository are
+available under the [BSD 3-Clause License](LICENSE). External datasets,
+pretrained models, and third-party software remain subject to their original
+licenses and terms.
