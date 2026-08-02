@@ -29,8 +29,7 @@ def _check_grouping_provenance(
     values = set(table["grouping_id_column"].dropna().astype(str))
     if values != {expected}:
         raise ValueError(
-            f"{label} grouping provenance is {sorted(values)}, "
-            f"expected only {expected!r}."
+            f"{label} grouping provenance is {sorted(values)}, expected only {expected!r}."
         )
 
 
@@ -63,9 +62,7 @@ def validate(out_dir: Path) -> dict[str, Any]:
     composition = pd.read_csv(tables / "age_celltype_trend_stats.csv")
     signatures = pd.read_csv(tables / "signature_age_associations.csv")
     prediction_metrics = pd.read_csv(tables / "age_pred_metrics.csv")
-    prediction_summary = pd.read_csv(
-        tables / "age_pred_model_comparison_summary.csv"
-    )
+    prediction_summary = pd.read_csv(tables / "age_pred_model_comparison_summary.csv")
     for label, table in [
         ("composition trends", composition),
         ("signature associations", signatures),
@@ -109,22 +106,14 @@ def validate(out_dir: Path) -> dict[str, Any]:
     )["fold"].nunique()
     leakage_groups = int((fold_counts > 1).sum())
     if leakage_groups:
-        raise ValueError(
-            f"Detected CV leakage in {leakage_groups} model-replicate groups."
-        )
+        raise ValueError(f"Detected CV leakage in {leakage_groups} model-replicate groups.")
 
-    sensitivity_manifest = pd.read_csv(
-        out_dir / "sensitivity_age" / "sensitivity_manifest.csv"
-    )
+    sensitivity_manifest = pd.read_csv(out_dir / "sensitivity_age" / "sensitivity_manifest.csv")
     if sensitivity_manifest.empty:
         raise ValueError("Sensitivity manifest is empty.")
     for _, row in sensitivity_manifest.iterrows():
-        scenario_composition = pd.read_csv(
-            Path(str(row["composition_trends_table"]))
-        )
-        scenario_signature = pd.read_csv(
-            Path(str(row["signature_assoc_table"]))
-        )
+        scenario_composition = pd.read_csv(Path(str(row["composition_trends_table"])))
+        scenario_signature = pd.read_csv(Path(str(row["signature_assoc_table"])))
         _check_grouping_provenance(
             scenario_composition,
             f"scenario {row['scenario']} composition",
@@ -153,15 +142,11 @@ def validate(out_dir: Path) -> dict[str, Any]:
         or (out_dir / "figures" / name).stat().st_size == 0
     ]
     if missing_figures:
-        raise FileNotFoundError(
-            f"Missing or empty corrected figures: {missing_figures}"
-        )
+        raise FileNotFoundError(f"Missing or empty corrected figures: {missing_figures}")
 
     comparison_summary = out_dir / "comparison" / "summary.json"
     if not comparison_summary.is_file():
-        raise FileNotFoundError(
-            f"Missing descriptive comparison: {comparison_summary}"
-        )
+        raise FileNotFoundError(f"Missing descriptive comparison: {comparison_summary}")
 
     return {
         "passed": True,
@@ -171,27 +156,17 @@ def validate(out_dir: Path) -> dict[str, Any]:
             "expression checkpoint was written"
         ),
         "mapped_cells": int(len(mapping)),
-        "unique_biological_replicates": int(
-            mapping["biological_replicate_id"].nunique()
-        ),
+        "unique_biological_replicates": int(mapping["biological_replicate_id"].nunique()),
         "composition_tests": int(len(composition)),
         "signature_tests": int(len(signatures)),
         "age_prediction_rows": int(len(predictions)),
-        "age_prediction_replicates": int(
-            predictions["biological_replicate_id"].nunique()
-        ),
+        "age_prediction_replicates": int(predictions["biological_replicate_id"].nunique()),
         "cv_leakage_groups": leakage_groups,
         "sensitivity_scenarios": int(len(sensitivity_manifest)),
         "nonempty_figures": len(expected_figures),
-        "donor_fraction_replicates": int(
-            donor_fractions["biological_replicate_id"].nunique()
-        ),
-        "signature_score_replicates": int(
-            signature_scores["biological_replicate_id"].nunique()
-        ),
-        "biological_interpretation_status": (
-            "provisional_pending_human_review"
-        ),
+        "donor_fraction_replicates": int(donor_fractions["biological_replicate_id"].nunique()),
+        "signature_score_replicates": int(signature_scores["biological_replicate_id"].nunique()),
+        "biological_interpretation_status": ("provisional_pending_human_review"),
     }
 
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import gzip
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,23 +39,14 @@ def _require_contract(cfg: dict[str, Any]) -> dict[str, Any]:
     ]
     missing = [key for key in required if key not in contract]
     if missing:
-        raise KeyError(
-            "Missing pseudobulk_de configuration keys: " + ", ".join(missing)
-        )
+        raise KeyError("Missing pseudobulk_de configuration keys: " + ", ".join(missing))
 
     primary = [str(value) for value in contract["primary_cell_types"]]
-    exploratory = [
-        str(value) for value in contract["exploratory_cell_types"]
-    ]
+    exploratory = [str(value) for value in contract["exploratory_cell_types"]]
     overlap = sorted(set(primary).intersection(exploratory))
     if overlap:
-        raise ValueError(
-            "Cell types cannot be both primary and exploratory: "
-            + ", ".join(overlap)
-        )
-    if len(primary) != len(set(primary)) or len(exploratory) != len(
-        set(exploratory)
-    ):
+        raise ValueError("Cell types cannot be both primary and exploratory: " + ", ".join(overlap))
+    if len(primary) != len(set(primary)) or len(exploratory) != len(set(exploratory)):
         raise ValueError("Configured cell-type lists contain duplicates.")
     return contract
 
@@ -73,8 +64,7 @@ def _replicate_metadata(
     if bool(bad.any()):
         examples = ", ".join(conflicts.index[bad].astype(str)[:5])
         raise ValueError(
-            "Age, sex, or batch is inconsistent within biological replicate; "
-            f"examples: {examples}"
+            f"Age, sex, or batch is inconsistent within biological replicate; examples: {examples}"
         )
 
     metadata = grouped[[age_col, sex_col, batch_col]].first().reset_index()
@@ -192,9 +182,7 @@ def _build_profiles_and_eligibility(
         counts["n_technical_libraries"] = pd.NA
 
     primary = {str(value) for value in contract["primary_cell_types"]}
-    exploratory = {
-        str(value) for value in contract["exploratory_cell_types"]
-    }
+    exploratory = {str(value) for value in contract["exploratory_cell_types"]}
     tier = {
         **{cell_type: "primary" for cell_type in primary},
         **{cell_type: "exploratory" for cell_type in exploratory},
@@ -242,9 +230,7 @@ def _build_profiles_and_eligibility(
                 "n_replicates_qualifying": int(len(qualifying)),
                 "age_span_years": age_span,
                 **design,
-                "aggregation_status": (
-                    "included" if aggregate else "excluded"
-                ),
+                "aggregation_status": ("included" if aggregate else "excluded"),
                 "exclusion_reasons": ";".join(reasons),
             }
         )
@@ -270,8 +256,7 @@ def _build_profiles_and_eligibility(
         )
 
     profiles = counts.loc[
-        counts["cell_type"].isin(included_cell_types)
-        & counts["n_cells"].ge(min_cells)
+        counts["cell_type"].isin(included_cell_types) & counts["n_cells"].ge(min_cells)
     ].copy()
     profiles["analysis_tier"] = profiles["cell_type"].map(tier)
     profiles = profiles.sort_values(
@@ -296,9 +281,7 @@ def _profile_codes(
     replicate_col: str,
     celltype_col: str,
 ) -> np.ndarray:
-    profile_index = pd.MultiIndex.from_frame(
-        profiles[["biological_replicate_id", "cell_type"]]
-    )
+    profile_index = pd.MultiIndex.from_frame(profiles[["biological_replicate_id", "cell_type"]])
     cell_index = pd.MultiIndex.from_arrays(
         [
             obs[replicate_col].astype(str),
@@ -381,13 +364,9 @@ def aggregate_sparse_counts(
     aggregate.sum_duplicates()
     aggregate.eliminate_zeros()
     aggregate.sort_indices()
-    observed_library_sizes = np.asarray(aggregate.sum(axis=1)).ravel().astype(
-        np.int64
-    )
+    observed_library_sizes = np.asarray(aggregate.sum(axis=1)).ravel().astype(np.int64)
     if not np.array_equal(observed_library_sizes, expected_library_sizes):
-        raise RuntimeError(
-            "Aggregated library sizes do not match selected raw-count totals."
-        )
+        raise RuntimeError("Aggregated library sizes do not match selected raw-count totals.")
     return aggregate, observed_library_sizes, included_cells
 
 
@@ -453,10 +432,7 @@ def run(
         ]
         missing = [column for column in required_columns if column not in obs]
         if missing:
-            raise KeyError(
-                "Annotated checkpoint lacks required columns: "
-                + ", ".join(missing)
-            )
+            raise KeyError("Annotated checkpoint lacks required columns: " + ", ".join(missing))
 
         obs[replicate_col] = _clean_string(obs[replicate_col])
         obs[celltype_col] = _clean_string(obs[celltype_col])
@@ -464,9 +440,7 @@ def run(
         obs[batch_col] = _clean_string(obs[batch_col])
         obs[age_col] = pd.to_numeric(obs[age_col], errors="coerce")
         if obs[required_columns].isna().any().any():
-            raise ValueError(
-                "Pseudobulk grouping and model metadata must be complete."
-            )
+            raise ValueError("Pseudobulk grouping and model metadata must be complete.")
 
         replicate_metadata = _replicate_metadata(
             obs,
@@ -507,9 +481,7 @@ def run(
 
         gene_ids = pd.Index(adata.var_names.astype(str), name="gene_id")
         if not gene_ids.is_unique:
-            raise ValueError(
-                "Gene identifiers must be unique before pseudobulk DE."
-            )
+            raise ValueError("Gene identifiers must be unique before pseudobulk DE.")
         genes = pd.DataFrame({"gene_id": gene_ids})
     finally:
         adata.file.close()
@@ -531,12 +503,8 @@ def run(
         "included_cells": included_cells,
         "excluded_cells": int(len(obs) - included_cells),
         "n_profiles": int(len(profiles)),
-        "n_primary_profiles": int(
-            profiles["analysis_tier"].eq("primary").sum()
-        ),
-        "n_exploratory_profiles": int(
-            profiles["analysis_tier"].eq("exploratory").sum()
-        ),
+        "n_primary_profiles": int(profiles["analysis_tier"].eq("primary").sum()),
+        "n_exploratory_profiles": int(profiles["analysis_tier"].eq("exploratory").sum()),
         "n_genes": int(len(genes)),
         "mapping_report": mapping_report,
         "approved_contract": {

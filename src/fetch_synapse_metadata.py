@@ -96,10 +96,16 @@ def main() -> None:
         help="Comma-separated exclude keywords to avoid large expression files.",
     )
     ap.add_argument("--profile", default=None, help="Synapse profile name in .synapseConfig.")
-    ap.add_argument("--auth-token-env", default="SYNAPSE_AUTH_TOKEN", help="Env var name for Synapse PAT.")
-    ap.add_argument("--download-dir", default="data/raw/raw_counts_h5ad", help="Destination folder.")
+    ap.add_argument(
+        "--auth-token-env", default="SYNAPSE_AUTH_TOKEN", help="Env var name for Synapse PAT."
+    )
+    ap.add_argument(
+        "--download-dir", default="data/raw/raw_counts_h5ad", help="Destination folder."
+    )
     ap.add_argument("--download", action="store_true", help="Download matched files.")
-    ap.add_argument("--limit", type=int, default=0, help="Max number of matched files (0 = no limit).")
+    ap.add_argument(
+        "--limit", type=int, default=0, help="Max number of matched files (0 = no limit)."
+    )
     args = ap.parse_args()
 
     include_keywords = _split_csv_values(args.keywords)

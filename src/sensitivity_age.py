@@ -116,7 +116,11 @@ def _build_scenarios(cfg: dict) -> list[dict]:
     deduped: list[dict] = []
     seen: set[tuple[bool, bool, int]] = set()
     for s in scenarios:
-        key = (bool(s["adjust_covariates"]), bool(s["drop_sparse_age_bins"]), int(s["min_cells_per_group"]))
+        key = (
+            bool(s["adjust_covariates"]),
+            bool(s["drop_sparse_age_bins"]),
+            int(s["min_cells_per_group"]),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -142,19 +146,33 @@ def _scenario_metrics(trends_path: Path, assoc_path: Path) -> dict[str, float]:
         trends = pd.read_csv(trends_path)
         metrics["n_trend_tests"] = float(trends.shape[0])
         if "fdr_significant" in trends.columns:
-            sig = pd.Series(trends["fdr_significant"]).astype(str).str.lower().isin({"true", "1", "yes"})
+            sig = (
+                pd.Series(trends["fdr_significant"])
+                .astype(str)
+                .str.lower()
+                .isin({"true", "1", "yes"})
+            )
             metrics["n_trend_fdr_lt_0_05"] = float(sig.sum())
         if "slope_per_10y" in trends.columns and not trends.empty:
-            metrics["median_abs_slope_per_10y"] = float(pd.to_numeric(trends["slope_per_10y"], errors="coerce").abs().median())
+            metrics["median_abs_slope_per_10y"] = float(
+                pd.to_numeric(trends["slope_per_10y"], errors="coerce").abs().median()
+            )
 
     if assoc_path.exists():
         assoc = pd.read_csv(assoc_path)
         metrics["n_signature_tests"] = float(assoc.shape[0])
         if "fdr_significant" in assoc.columns:
-            sig = pd.Series(assoc["fdr_significant"]).astype(str).str.lower().isin({"true", "1", "yes"})
+            sig = (
+                pd.Series(assoc["fdr_significant"])
+                .astype(str)
+                .str.lower()
+                .isin({"true", "1", "yes"})
+            )
             metrics["n_signature_fdr_lt_0_05"] = float(sig.sum())
         if "effect_per_10y" in assoc.columns and not assoc.empty:
-            metrics["median_abs_signature_effect_per_10y"] = float(pd.to_numeric(assoc["effect_per_10y"], errors="coerce").abs().median())
+            metrics["median_abs_signature_effect_per_10y"] = float(
+                pd.to_numeric(assoc["effect_per_10y"], errors="coerce").abs().median()
+            )
 
     return metrics
 
@@ -186,8 +204,7 @@ def main() -> None:
     for i, scenario in enumerate(scenarios):
         scenario_name = str(scenario["scenario"])
         print(
-            "[sensitivity_age] "
-            f"scenario {i + 1}/{len(scenarios)}: {scenario_name}",
+            f"[sensitivity_age] scenario {i + 1}/{len(scenarios)}: {scenario_name}",
             flush=True,
         )
         scenario_dir = outdir / scenario_name
@@ -203,12 +220,8 @@ def main() -> None:
         cfg_s["signature_age"]["adjust_covariates"] = bool(scenario["adjust_covariates"])
         cfg_s["composition_age"]["drop_sparse_age_bins"] = bool(scenario["drop_sparse_age_bins"])
         cfg_s["signature_age"]["min_cells_per_group"] = int(scenario["min_cells_per_group"])
-        cfg_s["composition_age"]["bootstrap_iterations"] = (
-            sensitivity_bootstrap_iterations
-        )
-        cfg_s["signature_age"]["bootstrap_iterations"] = (
-            sensitivity_bootstrap_iterations
-        )
+        cfg_s["composition_age"]["bootstrap_iterations"] = sensitivity_bootstrap_iterations
+        cfg_s["signature_age"]["bootstrap_iterations"] = sensitivity_bootstrap_iterations
         cfg_s.setdefault("sensitivity_age", {})
         cfg_s["sensitivity_age"]["active_scenario"] = scenario_name
         cfg_s["sensitivity_age"]["active_scenario_index"] = int(i)

@@ -25,9 +25,7 @@ def _load_model_with_provenance(ctcfg: dict):
     model = models.Model.load(model=model_spec)
     configured_path = Path(model_spec).expanduser()
     model_path = (
-        configured_path
-        if configured_path.is_file()
-        else Path(models.get_model_path(model_spec))
+        configured_path if configured_path.is_file() else Path(models.get_model_path(model_spec))
     )
     if not model_path.is_file():
         raise FileNotFoundError(
@@ -48,9 +46,7 @@ def _load_model_with_provenance(ctcfg: dict):
         "model_identifier": model_spec,
         "resolved_model_path": str(model_path.resolve()),
         "model_sha256": actual_sha256,
-        "model_source": str(
-            ctcfg.get("model_source", "https://www.celltypist.org/models")
-        ),
+        "model_source": str(ctcfg.get("model_source", "https://www.celltypist.org/models")),
         "celltypist_version": version("celltypist"),
     }
     for field in ("date", "details", "source", "version"):

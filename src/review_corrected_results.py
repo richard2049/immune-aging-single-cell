@@ -10,7 +10,6 @@ import pandas as pd
 
 from src.utils import ensure_dir, load_config
 
-
 ASSOCIATION_GROUP = "biological_replicate_id"
 ANALYSIS_SPECS = {
     "composition": {
@@ -80,9 +79,7 @@ def _ci_excludes_zero(low: Any, high: Any) -> bool:
     low_value = _finite_float(low)
     high_value = _finite_float(high)
     return bool(
-        np.isfinite(low_value)
-        and np.isfinite(high_value)
-        and (low_value > 0 or high_value < 0)
+        np.isfinite(low_value) and np.isfinite(high_value) and (low_value > 0 or high_value < 0)
     )
 
 
@@ -134,13 +131,9 @@ def _composition_support(path: Path) -> dict[str, dict[str, float]]:
         support[str(cell_type)] = {
             "age_min": _finite_float(eligible["age"].min()),
             "age_max": _finite_float(eligible["age"].max()),
-            "age_span": _finite_float(
-                eligible["age"].max() - eligible["age"].min()
-            ),
+            "age_span": _finite_float(eligible["age"].max() - eligible["age"].min()),
             "total_cells": int(eligible["n_cells"].sum()),
-            "median_cells_per_replicate": _finite_float(
-                eligible["n_cells"].median()
-            ),
+            "median_cells_per_replicate": _finite_float(eligible["n_cells"].median()),
         }
     return support
 
@@ -170,15 +163,12 @@ def _load_sensitivity(
             table_path = Path(str(scenario[table_column]))
             table = pd.read_csv(table_path)
             spec = ANALYSIS_SPECS[analysis]
-            required = (
-                spec["key"]
-                + [
-                    spec["effect"],
-                    spec["fdr"],
-                    "n_donors",
-                    "grouping_id_column",
-                ]
-            )
+            required = spec["key"] + [
+                spec["effect"],
+                spec["fdr"],
+                "n_donors",
+                "grouping_id_column",
+            ]
             _require_columns(table, required, table_path)
             for row in table.to_dict("records"):
                 signal = _signal_id(
@@ -192,9 +182,7 @@ def _load_sensitivity(
                         "effect": _finite_float(row[spec["effect"]]),
                         "fdr": _finite_float(row[spec["fdr"]]),
                         "n_replicates": int(row["n_donors"]),
-                        "grouping_id_column": str(
-                            row["grouping_id_column"]
-                        ),
+                        "grouping_id_column": str(row["grouping_id_column"]),
                         "source_path": str(table_path),
                     }
                 )
@@ -213,24 +201,11 @@ def _sensitivity_summary(
         for direction in directions
         if direction != 0 and corrected_direction != 0
     ]
-    valid_fdr = [
-        item["fdr"]
-        for item in records
-        if np.isfinite(item["fdr"])
-    ]
-    effects = [
-        item["effect"]
-        for item in records
-        if np.isfinite(item["effect"])
-    ]
-    grouping_ok = all(
-        item["grouping_id_column"] == ASSOCIATION_GROUP
-        for item in records
-    )
+    valid_fdr = [item["fdr"] for item in records if np.isfinite(item["fdr"])]
+    effects = [item["effect"] for item in records if np.isfinite(item["effect"])]
+    grouping_ok = all(item["grouping_id_column"] == ASSOCIATION_GROUP for item in records)
     tested = len(records)
-    direction_fraction = (
-        float(np.mean(same_direction)) if same_direction else 0.0
-    )
+    direction_fraction = float(np.mean(same_direction)) if same_direction else 0.0
     fdr_count = sum(value < fdr_threshold for value in valid_fdr)
     return {
         "sensitivity_expected_scenarios": expected_scenarios,
@@ -248,9 +223,7 @@ def _sensitivity_summary(
         ),
         "sensitivity_grouping_valid": grouping_ok,
         "sensitivity_complete_pass": tested == expected_scenarios,
-        "direction_consistency_pass": (
-            tested == expected_scenarios and all(same_direction)
-        ),
+        "direction_consistency_pass": (tested == expected_scenarios and all(same_direction)),
         "all_sensitivity_fdr_pass": (
             tested == expected_scenarios
             and len(valid_fdr) == expected_scenarios
@@ -266,28 +239,16 @@ def classify_association(
     core_pass = (
         row["corrected_fdr_pass"]
         and row["min_support_pass"]
-        and (
-            row["effect_ci_excludes_zero"]
-            or not criteria["require_effect_ci_excludes_zero"]
-        )
+        and (row["effect_ci_excludes_zero"] or not criteria["require_effect_ci_excludes_zero"])
         and row["grouping_valid"]
     )
     if not core_pass:
         return "not_prioritized"
 
     sensitivity_pass = (
-        (
-            row["sensitivity_complete_pass"]
-            or not criteria["require_all_sensitivity_scenarios"]
-        )
-        and (
-            row["direction_consistency_pass"]
-            or not criteria["require_direction_consistency"]
-        )
-        and (
-            row["all_sensitivity_fdr_pass"]
-            or not criteria["require_fdr_support_all_scenarios"]
-        )
+        (row["sensitivity_complete_pass"] or not criteria["require_all_sensitivity_scenarios"])
+        and (row["direction_consistency_pass"] or not criteria["require_direction_consistency"])
+        and (row["all_sensitivity_fdr_pass"] or not criteria["require_fdr_support_all_scenarios"])
         and row["sensitivity_grouping_valid"]
     )
     if sensitivity_pass:
@@ -306,22 +267,19 @@ def _association_rows(
 ) -> list[dict[str, Any]]:
     frame = pd.read_csv(source_path)
     spec = ANALYSIS_SPECS[analysis]
-    required = (
-        spec["key"]
-        + [
-            "n_donors",
-            spec["effect"],
-            spec["ci_low"],
-            spec["ci_high"],
-            spec["association"],
-            spec["association_ci_low"],
-            spec["association_ci_high"],
-            spec["fdr"],
-            "r_squared",
-            "direction",
-            "grouping_id_column",
-        ]
-    )
+    required = spec["key"] + [
+        "n_donors",
+        spec["effect"],
+        spec["ci_low"],
+        spec["ci_high"],
+        spec["association"],
+        spec["association_ci_low"],
+        spec["association_ci_high"],
+        spec["fdr"],
+        "r_squared",
+        "direction",
+        "grouping_id_column",
+    ]
     _require_columns(frame, required, source_path)
 
     evidence_rows: list[dict[str, Any]] = []
@@ -342,15 +300,9 @@ def _association_rows(
             "cell_type": cell_type,
             "signature": signature,
             "n_replicates": int(source_row["n_donors"]),
-            "age_min": _finite_float(
-                source_row.get("age_min", support_row.get("age_min"))
-            ),
-            "age_max": _finite_float(
-                source_row.get("age_max", support_row.get("age_max"))
-            ),
-            "age_span": _finite_float(
-                source_row.get("age_span", support_row.get("age_span"))
-            ),
+            "age_min": _finite_float(source_row.get("age_min", support_row.get("age_min"))),
+            "age_max": _finite_float(source_row.get("age_max", support_row.get("age_max"))),
+            "age_span": _finite_float(source_row.get("age_span", support_row.get("age_span"))),
             "total_cells": support_row.get("total_cells", np.nan),
             "median_cells_per_replicate": support_row.get(
                 "median_cells_per_replicate",
@@ -359,45 +311,25 @@ def _association_rows(
             "effect_per_10y": effect,
             "effect_ci_low": _finite_float(source_row[spec["ci_low"]]),
             "effect_ci_high": _finite_float(source_row[spec["ci_high"]]),
-            "association": _finite_float(
-                source_row[spec["association"]]
-            ),
-            "association_ci_low": _finite_float(
-                source_row[spec["association_ci_low"]]
-            ),
-            "association_ci_high": _finite_float(
-                source_row[spec["association_ci_high"]]
-            ),
+            "association": _finite_float(source_row[spec["association"]]),
+            "association_ci_low": _finite_float(source_row[spec["association_ci_low"]]),
+            "association_ci_high": _finite_float(source_row[spec["association_ci_high"]]),
             "primary_fdr": fdr,
             "r_squared": _finite_float(source_row["r_squared"]),
             "direction": str(source_row["direction"]),
-            "grouping_id_column": str(
-                source_row["grouping_id_column"]
-            ),
-            "grouping_valid": (
-                str(source_row["grouping_id_column"])
-                == ASSOCIATION_GROUP
-            ),
+            "grouping_id_column": str(source_row["grouping_id_column"]),
+            "grouping_valid": (str(source_row["grouping_id_column"]) == ASSOCIATION_GROUP),
             "effect_ci_excludes_zero": _ci_excludes_zero(
                 source_row[spec["ci_low"]],
                 source_row[spec["ci_high"]],
             ),
-            "corrected_fdr_pass": (
-                np.isfinite(fdr) and fdr < criteria["fdr_threshold"]
-            ),
+            "corrected_fdr_pass": (np.isfinite(fdr) and fdr < criteria["fdr_threshold"]),
             "min_support_pass": (
-                int(source_row["n_donors"])
-                >= criteria["min_biological_replicates"]
+                int(source_row["n_donors"]) >= criteria["min_biological_replicates"]
             ),
-            "comparison_status": str(
-                comparison_row.get("comparison_status", "")
-            ),
-            "provisional_effect": _finite_float(
-                comparison_row.get("provisional_effect")
-            ),
-            "provisional_fdr": _finite_float(
-                comparison_row.get("provisional_fdr")
-            ),
+            "comparison_status": str(comparison_row.get("comparison_status", "")),
+            "provisional_effect": _finite_float(comparison_row.get("provisional_effect")),
+            "provisional_fdr": _finite_float(comparison_row.get("provisional_fdr")),
             "source_path": str(source_path),
             "source_row_key": signal,
         }
@@ -416,8 +348,7 @@ def _association_rows(
         row["human_disposition"] = "pending"
         row["public_claim_approved"] = False
         row["primary_limitation"] = (
-            "Cross-sectional association; residual confounding and "
-            "annotation uncertainty remain."
+            "Cross-sectional association; residual confounding and annotation uncertainty remain."
             if analysis == "composition"
             else "Configured gene-set proxy; it does not establish pathway "
             "activation, causality, or external validity."
@@ -454,18 +385,13 @@ def _prediction_row(
     )
     best = metrics.loc[metrics["is_best"].map(_as_bool)]
     if len(best) != 1:
-        raise ValueError(
-            f"{metrics_path} must contain exactly one is_best row; "
-            f"found {len(best)}"
-        )
+        raise ValueError(f"{metrics_path} must contain exactly one is_best row; found {len(best)}")
     selected = best.iloc[0]
 
     prediction_comparison = pd.read_csv(comparison_path)
     comparison_record = {}
     if not prediction_comparison.empty:
-        candidates = prediction_comparison.loc[
-            prediction_comparison["model"].eq(selected["model"])
-        ]
+        candidates = prediction_comparison.loc[prediction_comparison["model"].eq(selected["model"])]
         if not candidates.empty:
             comparison_record = candidates.iloc[0].to_dict()
 
@@ -507,9 +433,7 @@ def _prediction_row(
         "effect_ci_excludes_zero": False,
         "corrected_fdr_pass": False,
         "min_support_pass": True,
-        "comparison_status": str(
-            comparison_record.get("comparison_status", "")
-        ),
+        "comparison_status": str(comparison_record.get("comparison_status", "")),
         "provisional_effect": np.nan,
         "provisional_fdr": np.nan,
         "source_path": str(metrics_path),
@@ -540,9 +464,7 @@ def _prediction_row(
         "r2_ci_low": _finite_float(selected["r2_ci_low"]),
         "r2_ci_high": _finite_float(selected["r2_ci_high"]),
         "baseline_mae_years": _finite_float(selected["baseline_mae"]),
-        "delta_mae_vs_baseline": _finite_float(
-            selected["delta_mae_vs_baseline"]
-        ),
+        "delta_mae_vs_baseline": _finite_float(selected["delta_mae_vs_baseline"]),
         "n_groups": int(selected["n_groups"]),
         "n_splits": int(selected["n_splits"]),
         "validation_passed": validation_passed,
@@ -559,19 +481,13 @@ def apply_human_dispositions(
     asset_decisions = record.get("draft_asset_decisions", {})
     final_approval = record.get("final_approval", {})
     if not isinstance(metadata, dict):
-        raise TypeError(
-            f"review_metadata must be a mapping: {dispositions_path}"
-        )
+        raise TypeError(f"review_metadata must be a mapping: {dispositions_path}")
     if not isinstance(decisions, list):
         raise TypeError(f"decisions must be a list: {dispositions_path}")
     if not isinstance(asset_decisions, dict):
-        raise TypeError(
-            f"draft_asset_decisions must be a mapping: {dispositions_path}"
-        )
+        raise TypeError(f"draft_asset_decisions must be a mapping: {dispositions_path}")
     if not isinstance(final_approval, dict):
-        raise TypeError(
-            f"final_approval must be a mapping: {dispositions_path}"
-        )
+        raise TypeError(f"final_approval must be a mapping: {dispositions_path}")
     required_metadata = {
         "status",
         "reviewer",
@@ -582,17 +498,12 @@ def apply_human_dispositions(
     }
     missing_metadata = sorted(required_metadata.difference(metadata))
     if missing_metadata:
-        raise ValueError(
-            f"{dispositions_path} is missing review metadata: "
-            f"{missing_metadata}"
-        )
+        raise ValueError(f"{dispositions_path} is missing review metadata: {missing_metadata}")
     public_approved = _as_bool(metadata["public_claims_approved"])
     assets_approved = _as_bool(metadata["asset_replacements_approved"])
     final_status = str(final_approval.get("status", ""))
     if (public_approved or assets_approved) and final_status != "approved":
-        raise ValueError(
-            "Public claims or assets require final_approval.status=approved."
-        )
+        raise ValueError("Public claims or assets require final_approval.status=approved.")
     if public_approved and not final_approval.get("readme_wording"):
         raise ValueError("Public claims require approved README wording.")
 
@@ -604,9 +515,7 @@ def apply_human_dispositions(
     seen: set[str] = set()
     for decision in decisions:
         if not isinstance(decision, dict):
-            raise TypeError(
-                f"Each decision must be a mapping: {dispositions_path}"
-            )
+            raise TypeError(f"Each decision must be a mapping: {dispositions_path}")
         required = {
             "signal_id",
             "disposition",
@@ -615,9 +524,7 @@ def apply_human_dispositions(
         }
         missing = sorted(required.difference(decision))
         if missing:
-            raise ValueError(
-                f"A decision in {dispositions_path} is missing: {missing}"
-            )
+            raise ValueError(f"A decision in {dispositions_path} is missing: {missing}")
         signal_id = str(decision["signal_id"])
         if signal_id in seen:
             raise ValueError(f"Duplicate disposition for {signal_id}")
@@ -625,18 +532,12 @@ def apply_human_dispositions(
         disposition = str(decision["disposition"])
         tier = str(decision["presentation_tier"])
         if disposition not in ALLOWED_DISPOSITIONS:
-            raise ValueError(
-                f"Unsupported disposition for {signal_id}: {disposition}"
-            )
+            raise ValueError(f"Unsupported disposition for {signal_id}: {disposition}")
         if tier not in ALLOWED_PRESENTATION_TIERS:
-            raise ValueError(
-                f"Unsupported presentation tier for {signal_id}: {tier}"
-            )
+            raise ValueError(f"Unsupported presentation tier for {signal_id}: {tier}")
         matches = reviewed["signal_id"].eq(signal_id)
         if int(matches.sum()) != 1:
-            raise ValueError(
-                f"Disposition signal must match one evidence row: {signal_id}"
-            )
+            raise ValueError(f"Disposition signal must match one evidence row: {signal_id}")
         automated_status = reviewed.loc[
             matches,
             "automated_screen_status",
@@ -645,20 +546,12 @@ def apply_human_dispositions(
             "candidate_for_human_review",
             "candidate_internal_performance_only",
         }:
-            raise ValueError(
-                f"Disposition targets a non-candidate signal: {signal_id}"
-            )
+            raise ValueError(f"Disposition targets a non-candidate signal: {signal_id}")
         reviewed.loc[matches, "human_disposition"] = disposition
         reviewed.loc[matches, "presentation_tier"] = tier
-        reviewed.loc[matches, "disposition_rationale"] = str(
-            decision["rationale"]
-        )
-        reviewed.loc[matches, "decision_reviewer"] = str(
-            metadata["reviewer"]
-        )
-        reviewed.loc[matches, "decision_date"] = str(
-            metadata["review_date"]
-        )
+        reviewed.loc[matches, "disposition_rationale"] = str(decision["rationale"])
+        reviewed.loc[matches, "decision_reviewer"] = str(metadata["reviewer"])
+        reviewed.loc[matches, "decision_date"] = str(metadata["review_date"])
 
     priority = reviewed["automated_screen_status"].isin(
         [
@@ -671,9 +564,7 @@ def apply_human_dispositions(
     )
     metadata = dict(metadata)
     metadata["source_path"] = str(dispositions_path)
-    metadata["candidate_dispositions_complete"] = (
-        candidate_dispositions_complete
-    )
+    metadata["candidate_dispositions_complete"] = candidate_dispositions_complete
     metadata["recorded_decisions"] = len(decisions)
     metadata["draft_asset_decisions"] = asset_decisions
     metadata["final_approval"] = final_approval
@@ -687,13 +578,9 @@ def apply_human_dispositions(
     for signal_id in approved_signal_ids:
         matches = reviewed["signal_id"].eq(signal_id)
         if int(matches.sum()) != 1:
-            raise ValueError(
-                f"Approved public signal must match one row: {signal_id}"
-            )
+            raise ValueError(f"Approved public signal must match one row: {signal_id}")
         if reviewed.loc[matches, "human_disposition"].iloc[0] != "retain":
-            raise ValueError(
-                f"Only retained signals may be publicly approved: {signal_id}"
-            )
+            raise ValueError(f"Only retained signals may be publicly approved: {signal_id}")
         reviewed.loc[matches, "public_claim_approved"] = True
     metadata["approved_public_signal_ids"] = approved_signal_ids
     return reviewed, metadata
@@ -706,9 +593,7 @@ def build_evidence(
     review_config = config.get("result_review", {})
     criteria = {
         "fdr_threshold": float(review_config.get("fdr_threshold", 0.05)),
-        "min_biological_replicates": int(
-            review_config.get("min_biological_replicates", 20)
-        ),
+        "min_biological_replicates": int(review_config.get("min_biological_replicates", 20)),
         "require_effect_ci_excludes_zero": bool(
             review_config.get("require_effect_ci_excludes_zero", True)
         ),
@@ -729,17 +614,11 @@ def build_evidence(
         ),
     }
     tables = corrected_out / "tables"
-    sensitivity_manifest = (
-        corrected_out / "sensitivity_age" / "sensitivity_manifest.csv"
-    )
+    sensitivity_manifest = corrected_out / "sensitivity_age" / "sensitivity_manifest.csv"
     manifest, sensitivity = _load_sensitivity(sensitivity_manifest)
     expected_scenarios = len(manifest)
-    comparison = _load_comparison(
-        corrected_out / "comparison" / "association_comparison.csv"
-    )
-    support = _composition_support(
-        tables / "age_celltype_fraction_by_donor.csv"
-    )
+    comparison = _load_comparison(corrected_out / "comparison" / "association_comparison.csv")
+    support = _composition_support(tables / "age_celltype_fraction_by_donor.csv")
 
     rows: list[dict[str, Any]] = []
     rows.extend(
@@ -767,12 +646,8 @@ def build_evidence(
     rows.append(
         _prediction_row(
             tables / "age_pred_metrics.csv",
-            corrected_out
-            / "comparison"
-            / "age_prediction_comparison.csv",
-            corrected_out
-            / "validation"
-            / "replicate_correction_validation.json",
+            corrected_out / "comparison" / "age_prediction_comparison.csv",
+            corrected_out / "validation" / "replicate_correction_validation.json",
         )
     )
     evidence = pd.DataFrame(rows)
@@ -794,9 +669,7 @@ def build_evidence(
     )
     public_changes_authorized = bool(
         disposition_metadata.get("status") == "public_promotion_approved"
-        and _as_bool(
-            disposition_metadata.get("public_claims_approved", False)
-        )
+        and _as_bool(disposition_metadata.get("public_claims_approved", False))
         and _as_bool(
             disposition_metadata.get(
                 "asset_replacements_approved",
@@ -817,31 +690,24 @@ def build_evidence(
         "evidence_rows": int(len(evidence)),
         "status_counts": {
             str(key): int(value)
-            for key, value in evidence[
-                "automated_screen_status"
-            ].value_counts().items()
+            for key, value in evidence["automated_screen_status"].value_counts().items()
         },
         "analysis_counts": {
-            str(key): int(value)
-            for key, value in evidence["analysis"].value_counts().items()
+            str(key): int(value) for key, value in evidence["analysis"].value_counts().items()
         },
-        "all_human_dispositions_pending": bool(
-            evidence["human_disposition"].eq("pending").all()
-        ),
-        "candidate_dispositions_complete": (
-            candidate_dispositions_complete
-        ),
+        "all_human_dispositions_pending": bool(evidence["human_disposition"].eq("pending").all()),
+        "candidate_dispositions_complete": (candidate_dispositions_complete),
         "human_disposition_counts": {
             str(key): int(value)
             for key, value in evidence.loc[
                 priority,
                 "human_disposition",
-            ].value_counts().items()
+            ]
+            .value_counts()
+            .items()
         },
         "review_metadata": disposition_metadata,
-        "any_public_claim_approved": bool(
-            evidence["public_claim_approved"].map(_as_bool).any()
-        ),
+        "any_public_claim_approved": bool(evidence["public_claim_approved"].map(_as_bool).any()),
     }
     return evidence, summary
 
@@ -860,18 +726,12 @@ def _markdown_table(frame: pd.DataFrame, columns: list[str]) -> str:
     display = frame.loc[:, columns].copy()
     for column in display.select_dtypes(include=["float"]).columns:
         display[column] = display[column].map(
-            lambda value: (
-                ""
-                if pd.isna(value)
-                else f"{value:.4g}"
-            )
+            lambda value: ("" if pd.isna(value) else f"{value:.4g}")
         )
     header = "| " + " | ".join(columns) + " |"
     separator = "| " + " | ".join(["---"] * len(columns)) + " |"
     rows = [
-        "| "
-        + " | ".join(str(value).replace("|", "\\|") for value in row)
-        + " |"
+        "| " + " | ".join(str(value).replace("|", "\\|") for value in row) + " |"
         for row in display.itertuples(index=False, name=None)
     ]
     return "\n".join([header, separator, *rows])
@@ -883,15 +743,12 @@ def write_review_report(
     path: Path,
 ) -> None:
     candidates = evidence.loc[
-        evidence["automated_screen_status"].eq(
-            "candidate_for_human_review"
-        )
+        evidence["automated_screen_status"].eq("candidate_for_human_review")
     ].sort_values(["analysis", "primary_fdr", "signal_id"])
     prediction = evidence.loc[evidence["analysis"].eq("prediction")].iloc[0]
     criteria = summary["criteria"]
     status_lines = "\n".join(
-        f"- `{status}`: {count}"
-        for status, count in summary["status_counts"].items()
+        f"- `{status}`: {count}" for status, count in summary["status_counts"].items()
     )
     candidate_table = _markdown_table(
         candidates,
@@ -916,29 +773,21 @@ def write_review_report(
         False,
     )
     if summary["review_status"] == "public_promotion_approved":
+        review_heading = "Corrected public wording and assets approved."
+    elif summary["review_status"].startswith("draft_asset_design_approved"):
         review_heading = (
-            "Corrected public wording and assets approved."
-        )
-    elif summary["review_status"].startswith(
-        "draft_asset_design_approved"
-    ):
-        review_heading = (
-            "Candidate dispositions and draft-asset design approved; "
-            "final public sign-off pending."
+            "Candidate dispositions and draft-asset design approved; final public sign-off pending."
         )
     elif dispositions_recorded:
-        review_heading = (
-            "Candidate dispositions approved; public wording and assets "
-            "pending."
-        )
+        review_heading = "Candidate dispositions approved; public wording and assets pending."
     else:
         review_heading = "Pending human sign-off."
     reviewer_lines = ""
     if review_metadata:
         reviewer_lines = (
-            f'- Reviewer: `{review_metadata["reviewer"]}`\n'
-            f'- Review date: `{review_metadata["review_date"]}`\n'
-            f'- Public scope: `{review_metadata["public_scope"]}`\n'
+            f"- Reviewer: `{review_metadata['reviewer']}`\n"
+            f"- Review date: `{review_metadata['review_date']}`\n"
+            f"- Public scope: `{review_metadata['public_scope']}`\n"
         )
     if summary["public_changes_authorized"]:
         review_context = (
@@ -1069,12 +918,9 @@ def build_promotion_manifest(
     assets = [
         {
             "role": "composition",
-            "source": str(
-                review_figure_dir / "composition_core_trends_draft.png"
-            ),
+            "source": str(review_figure_dir / "composition_core_trends_draft.png"),
             "proposed_destination": str(
-                Path("docs/assets")
-                / "gse164378_corrected_composition_core_trends.png"
+                Path("docs/assets") / "gse164378_corrected_composition_core_trends.png"
             ),
             "draft_decision": asset_decisions.get(
                 "composition_figure",
@@ -1094,12 +940,9 @@ def build_promotion_manifest(
         },
         {
             "role": "prediction",
-            "source": str(
-                review_figure_dir / "age_prediction_internal_cv_draft.png"
-            ),
+            "source": str(review_figure_dir / "age_prediction_internal_cv_draft.png"),
             "proposed_destination": str(
-                Path("docs/assets")
-                / "gse164378_corrected_age_prediction_internal_cv.png"
+                Path("docs/assets") / "gse164378_corrected_age_prediction_internal_cv.png"
             ),
             "draft_decision": asset_decisions.get(
                 "prediction_figure",
@@ -1109,12 +952,9 @@ def build_promotion_manifest(
         },
         {
             "role": "composition_forest",
-            "source": str(
-                review_figure_dir / "composition_effect_forest_draft.png"
-            ),
+            "source": str(review_figure_dir / "composition_effect_forest_draft.png"),
             "proposed_destination": str(
-                Path("docs/assets")
-                / "gse164378_corrected_composition_effect_forest.png"
+                Path("docs/assets") / "gse164378_corrected_composition_effect_forest.png"
             ),
             "draft_decision": asset_decisions.get(
                 "forest_figure",
@@ -1124,13 +964,9 @@ def build_promotion_manifest(
         },
     ]
     retained = evidence.loc[evidence["human_disposition"].eq("retain")]
-    exploratory = evidence.loc[
-        evidence["human_disposition"].eq("exploratory")
-    ]
+    exploratory = evidence.loc[evidence["human_disposition"].eq("exploratory")]
     excluded = evidence.loc[evidence["human_disposition"].eq("exclude")]
-    public_changes_authorized = bool(
-        summary.get("public_changes_authorized", False)
-    )
+    public_changes_authorized = bool(summary.get("public_changes_authorized", False))
     asset_status = (
         "approved_for_public_replacement"
         if public_changes_authorized
@@ -1146,9 +982,7 @@ def build_promotion_manifest(
         "reviewer": review_metadata.get("reviewer", ""),
         "review_date": review_metadata.get("review_date", ""),
         "candidate_signal_ids": candidates["signal_id"].tolist(),
-        "retained_for_drafting_signal_ids": retained[
-            "signal_id"
-        ].tolist(),
+        "retained_for_drafting_signal_ids": retained["signal_id"].tolist(),
         "exploratory_signal_ids": exploratory["signal_id"].tolist(),
         "excluded_signal_ids": excluded["signal_id"].tolist(),
         "assets": assets,
@@ -1170,9 +1004,7 @@ def build_promotion_manifest(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Build a traceable, non-promotional review of corrected results."
-        )
+        description=("Build a traceable, non-promotional review of corrected results.")
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--corrected-out", required=True)

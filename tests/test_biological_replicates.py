@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import anndata as ad
 import numpy as np
@@ -140,8 +140,7 @@ class BiologicalReplicateTests(unittest.TestCase):
             chunk_size=1,
         )
         expected = np.log1p(
-            matrix[[2, 0]][:, [0, 2]]
-            * (100.0 / matrix[[2, 0]].sum(axis=1))[:, None]
+            matrix[[2, 0]][:, [0, 2]] * (100.0 / matrix[[2, 0]].sum(axis=1))[:, None]
         )
 
         np.testing.assert_allclose(

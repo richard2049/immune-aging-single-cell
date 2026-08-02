@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
@@ -12,7 +12,6 @@ from src.review_corrected_results import (
     build_promotion_manifest,
     classify_association,
 )
-
 
 CRITERIA = {
     "require_effect_ci_excludes_zero": True,
@@ -95,9 +94,7 @@ class CorrectedResultReviewTests(unittest.TestCase):
         evidence = pd.DataFrame(
             {
                 "signal_id": ["composition::Test cells"],
-                "automated_screen_status": [
-                    "candidate_for_human_review"
-                ],
+                "automated_screen_status": ["candidate_for_human_review"],
                 "human_disposition": ["pending"],
                 "public_claim_approved": [False],
             }
@@ -135,9 +132,7 @@ decisions:
         evidence = pd.DataFrame(
             {
                 "signal_id": ["composition::Known cells"],
-                "automated_screen_status": [
-                    "candidate_for_human_review"
-                ],
+                "automated_screen_status": ["candidate_for_human_review"],
                 "human_disposition": ["pending"],
             }
         )
@@ -173,9 +168,7 @@ decisions:
         evidence = pd.DataFrame(
             {
                 "signal_id": ["composition::Test cells"],
-                "automated_screen_status": [
-                    "candidate_for_human_review"
-                ],
+                "automated_screen_status": ["candidate_for_human_review"],
                 "human_disposition": ["retain"],
             }
         )
@@ -185,9 +178,7 @@ decisions:
                 "reviewer": "Repository owner",
                 "review_date": "2026-07-30",
                 "public_scope": "conservative_core",
-                "draft_asset_decisions": {
-                    "signature_figure": "omit_from_curated_assets"
-                },
+                "draft_asset_decisions": {"signature_figure": "omit_from_curated_assets"},
             },
         }
 
@@ -198,11 +189,7 @@ decisions:
         )
 
         self.assertFalse(observed["public_changes_authorized"])
-        signature = next(
-            item
-            for item in observed["assets"]
-            if item["role"] == "signature"
-        )
+        signature = next(item for item in observed["assets"] if item["role"] == "signature")
         self.assertEqual(
             signature["status"],
             "not_selected_for_curated_assets",

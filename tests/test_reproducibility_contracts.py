@@ -58,9 +58,9 @@ class ReproducibilityContractTests(unittest.TestCase):
     def test_metadata_join_rejects_conflicting_duplicate_keys(self) -> None:
         with self._temporary_directory() as tmp:
             table = Path(tmp) / "metadata.csv"
-            pd.DataFrame(
-                {"cell_id": ["cell_a", "cell_a"], "age": [30, 31]}
-            ).to_csv(table, index=False)
+            pd.DataFrame({"cell_id": ["cell_a", "cell_a"], "age": [30, 31]}).to_csv(
+                table, index=False
+            )
             adata = ad.AnnData(
                 X=np.ones((1, 1)),
                 obs=pd.DataFrame(index=["cell_a"]),
@@ -79,9 +79,7 @@ class ReproducibilityContractTests(unittest.TestCase):
     def test_metadata_join_rejects_unmatched_cells_by_default(self) -> None:
         with self._temporary_directory() as tmp:
             table = Path(tmp) / "metadata.csv"
-            pd.DataFrame({"cell_id": ["cell_a"], "age": [30]}).to_csv(
-                table, index=False
-            )
+            pd.DataFrame({"cell_id": ["cell_a"], "age": [30]}).to_csv(table, index=False)
             adata = ad.AnnData(
                 X=np.ones((2, 1)),
                 obs=pd.DataFrame(index=["cell_a", "cell_b"]),

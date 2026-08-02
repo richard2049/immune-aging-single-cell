@@ -10,7 +10,14 @@ import pandas as pd
 from scipy import stats
 
 from .biological_replicates import attach_biological_replicates
-from .plot_style import PALETTE, apply_publication_style, categorical_palette, finalize_and_save, save_placeholder, style_axis
+from .plot_style import (
+    PALETTE,
+    apply_publication_style,
+    categorical_palette,
+    finalize_and_save,
+    save_placeholder,
+    style_axis,
+)
 from .utils import ensure_dir, load_config
 
 
@@ -189,12 +196,16 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
     donor_col = (
         cfg_donor_col
         if cfg_donor_col in obs.columns
-        else _first_existing(all_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"])
+        else _first_existing(
+            all_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
+        )
     )
     celltype_col = (
         cfg_celltype_col
         if cfg_celltype_col in obs.columns
-        else _first_existing(all_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"])
+        else _first_existing(
+            all_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"]
+        )
     )
 
     required = {
@@ -207,7 +218,9 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
     if age_col is None or donor_col is None or celltype_col is None:
         return pd.DataFrame(), required
 
-    keep_cols = [age_col, donor_col, celltype_col] + [c for c in covariate_cols if c not in {age_col, donor_col, celltype_col}]
+    keep_cols = [age_col, donor_col, celltype_col] + [
+        c for c in covariate_cols if c not in {age_col, donor_col, celltype_col}
+    ]
     out = obs[keep_cols].copy()
     out = out.rename(columns={age_col: "age", donor_col: "donor_id", celltype_col: "cell_type"})
     out["age"] = pd.to_numeric(out["age"], errors="coerce")
@@ -217,7 +230,9 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
     return out, required
 
 
-def _build_donor_fraction_table(obs: pd.DataFrame, min_cells_per_donor: int, covariate_cols: list[str]) -> pd.DataFrame:
+def _build_donor_fraction_table(
+    obs: pd.DataFrame, min_cells_per_donor: int, covariate_cols: list[str]
+) -> pd.DataFrame:
     agg_map: dict[str, tuple[str, str | callable]] = {
         "age": ("age", "median"),
         "total_cells": ("cell_type", "size"),
@@ -229,17 +244,21 @@ def _build_donor_fraction_table(obs: pd.DataFrame, min_cells_per_donor: int, cov
     totals = obs.groupby("donor_id", observed=False).agg(**agg_map)
     totals = totals[totals["total_cells"] >= min_cells_per_donor].reset_index()
     if totals.empty:
-        return pd.DataFrame(columns=["donor_id", "age", "cell_type", "n_cells", "total_cells", "fraction"])
+        return pd.DataFrame(
+            columns=["donor_id", "age", "cell_type", "n_cells", "total_cells", "fraction"]
+        )
 
     kept = obs[obs["donor_id"].isin(totals["donor_id"])]
     counts = (
-        kept.groupby(["donor_id", "cell_type"], observed=False)
-        .size()
-        .reset_index(name="n_cells")
+        kept.groupby(["donor_id", "cell_type"], observed=False).size().reset_index(name="n_cells")
     )
     out = counts.merge(totals, on="donor_id", how="left")
     out["fraction"] = out["n_cells"] / out["total_cells"]
-    keep = ["donor_id", "age"] + [c for c in covariate_cols if c in out.columns] + ["cell_type", "n_cells", "total_cells", "fraction"]
+    keep = (
+        ["donor_id", "age"]
+        + [c for c in covariate_cols if c in out.columns]
+        + ["cell_type", "n_cells", "total_cells", "fraction"]
+    )
     return out[keep]
 
 
@@ -257,7 +276,9 @@ def _compute_trends(
     for i, (ct, g) in enumerate(donor_fraction.groupby("cell_type", observed=False)):
         if len(g) < min_donors_per_celltype:
             continue
-        x, y, used_adjustment = _prepare_xy_for_stats(g, covariate_cols=covariate_cols, adjust_covariates=adjust_covariates)
+        x, y, used_adjustment = _prepare_xy_for_stats(
+            g, covariate_cols=covariate_cols, adjust_covariates=adjust_covariates
+        )
         rho, p = stats.spearmanr(x, y)
         lr = stats.linregress(x, y)
         if not np.isfinite(rho) or not np.isfinite(p):
@@ -326,7 +347,9 @@ def _compute_trends(
     out["slope_fdr"] = _bh_fdr(out["slope_pvalue"].to_numpy())
     out["direction"] = np.where(out["slope_per_year"] > 0, "increase_with_age", "decrease_with_age")
     out["fdr_significant"] = out["spearman_fdr"] < 0.05
-    return out.sort_values(["spearman_fdr", "spearman_pvalue", "spearman_rho"], ascending=[True, True, False])
+    return out.sort_values(
+        ["spearman_fdr", "spearman_pvalue", "spearman_rho"], ascending=[True, True, False]
+    )
 
 
 def _plot_fraction_by_age_bin(
@@ -341,20 +364,29 @@ def _plot_fraction_by_age_bin(
     dpi: int,
 ) -> None:
     if donor_fraction.empty:
-        _save_placeholder(path, "Cell-type Composition by Age Bin", "No donor-level fractions available.", dpi)
+        _save_placeholder(
+            path, "Cell-type Composition by Age Bin", "No donor-level fractions available.", dpi
+        )
         return
 
     df = donor_fraction.copy()
     bins = sorted(set(float(v) for v in age_bins))
     if len(bins) < 2:
-        _save_placeholder(path, "Cell-type Composition by Age Bin", "Need at least two age bin edges.", dpi)
+        _save_placeholder(
+            path, "Cell-type Composition by Age Bin", "Need at least two age bin edges.", dpi
+        )
         return
 
     labels = [f"{int(bins[i])}-{int(bins[i + 1])}" for i in range(len(bins) - 1)]
     df["age_bin"] = pd.cut(df["age"], bins=bins, labels=labels, include_lowest=True, right=False)
     df = df.dropna(subset=["age_bin"])
     if df.empty:
-        _save_placeholder(path, "Cell-type Composition by Age Bin", "No donors fall inside configured age bins.", dpi)
+        _save_placeholder(
+            path,
+            "Cell-type Composition by Age Bin",
+            "No donors fall inside configured age bins.",
+            dpi,
+        )
         return
 
     top_ct = (
@@ -372,17 +404,32 @@ def _plot_fraction_by_age_bin(
         .unstack(fill_value=0.0)
     )
     pivot = pivot.div(pivot.sum(axis=1).replace(0.0, np.nan), axis=0).fillna(0.0)
-    donors_per_bin = df.groupby("age_bin", observed=False)["donor_id"].nunique().reindex(pivot.index).fillna(0).astype(int)
+    donors_per_bin = (
+        df.groupby("age_bin", observed=False)["donor_id"]
+        .nunique()
+        .reindex(pivot.index)
+        .fillna(0)
+        .astype(int)
+    )
     if min_donors_per_bin > 0 and drop_sparse_bins:
         keep_bins = donors_per_bin >= int(min_donors_per_bin)
         pivot = pivot.loc[keep_bins]
         donors_per_bin = donors_per_bin.loc[keep_bins]
         if pivot.empty:
-            _save_placeholder(path, "Cell-type Composition by Age Bin", f"No age bins with donors >= {int(min_donors_per_bin)}.", dpi)
+            _save_placeholder(
+                path,
+                "Cell-type Composition by Age Bin",
+                f"No age bins with donors >= {int(min_donors_per_bin)}.",
+                dpi,
+            )
             return
     sparse_warn_threshold = int(max(sparse_bin_warn_threshold, 0))
     marker = str(sparse_bin_marker).strip() or "*"
-    sparse_mask = donors_per_bin < sparse_warn_threshold if sparse_warn_threshold > 0 else pd.Series(False, index=donors_per_bin.index)
+    sparse_mask = (
+        donors_per_bin < sparse_warn_threshold
+        if sparse_warn_threshold > 0
+        else pd.Series(False, index=donors_per_bin.index)
+    )
 
     fig, ax = plt.subplots(figsize=(10, 6))
     x = np.arange(len(pivot.index))
@@ -444,7 +491,9 @@ def _plot_top_trends(
         if min_donors_for_panel > 0:
             filters.append(f"n_donors>={min_donors_for_panel}")
         suffix = f" ({', '.join(filters)})" if filters else ""
-        _save_placeholder(path, "Top Cell-type Age Trends", f"No trends satisfy panel filters{suffix}.", dpi)
+        _save_placeholder(
+            path, "Top Cell-type Age Trends", f"No trends satisfy panel filters{suffix}.", dpi
+        )
         return
 
     top = candidates.head(top_n_trends)["cell_type"].tolist()
@@ -509,10 +558,18 @@ def main() -> None:
     adjust_covariates = bool(ccfg.get("adjust_covariates", True))
     min_donors_per_age_bin = int(ccfg.get("min_donors_per_age_bin", 12))
     drop_sparse_age_bins = bool(ccfg.get("drop_sparse_age_bins", True))
-    sparse_age_bin_warn_threshold = int(ccfg.get("sparse_age_bin_warn_threshold", min_donors_per_age_bin))
+    sparse_age_bin_warn_threshold = int(
+        ccfg.get("sparse_age_bin_warn_threshold", min_donors_per_age_bin)
+    )
     sparse_age_bin_marker = str(ccfg.get("sparse_age_bin_marker", "*"))
-    bootstrap_iterations = int(ccfg.get("bootstrap_iterations", cfg.get("age_prediction", {}).get("bootstrap_iterations", 2000)))
-    bootstrap_ci = float(ccfg.get("bootstrap_ci", cfg.get("age_prediction", {}).get("bootstrap_ci", 0.95)))
+    bootstrap_iterations = int(
+        ccfg.get(
+            "bootstrap_iterations", cfg.get("age_prediction", {}).get("bootstrap_iterations", 2000)
+        )
+    )
+    bootstrap_ci = float(
+        ccfg.get("bootstrap_ci", cfg.get("age_prediction", {}).get("bootstrap_ci", 0.95))
+    )
     seed = int(cfg.get("run", {}).get("seed", 42))
     age_bins = ccfg.get("age_bins", analysis_cfg.get("age_bins", [25, 35, 45, 55, 65, 75, 85]))
     bootstrap_iterations = max(0, bootstrap_iterations)
@@ -530,7 +587,9 @@ def main() -> None:
         flush=True,
     )
     if obs.empty:
-        pd.DataFrame(columns=["donor_id", "age", "cell_type", "n_cells", "total_cells", "fraction"]).to_csv(
+        pd.DataFrame(
+            columns=["donor_id", "age", "cell_type", "n_cells", "total_cells", "fraction"]
+        ).to_csv(
             args.table_donor_fractions,
             index=False,
         )
@@ -582,9 +641,7 @@ def main() -> None:
     )
 
     grouping_col = str(ccfg.get("donor_col", "donor_id"))
-    donor_fraction_out = donor_fraction.rename(
-        columns={"donor_id": grouping_col}
-    )
+    donor_fraction_out = donor_fraction.rename(columns={"donor_id": grouping_col})
     trends["grouping_id_column"] = grouping_col
     donor_fraction_out.to_csv(args.table_donor_fractions, index=False)
     trends.to_csv(args.table_trends, index=False)
