@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "immune-aging-scvi: a reproducible PBMC single-cell immune-aging workflow"
+type: software
+authors:
+  - family-names: "Marín Bautista"
+    given-names: "Ricardo"
+    orcid: "https://orcid.org/0009-0007-9323-9107"
+repository-code: "https://github.com/richard2049/immune-aging-single-cell"
+version: 0.1.0
+date-released: "2026-08-02"
+license: BSD-3-Clause
+keywords:
+  - "single-cell RNA sequencing"
+  - "immune aging"
+  - "PBMC"
+  - "bioinformatics"
+  - "reproducible workflow"
