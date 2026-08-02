@@ -1,11 +1,63 @@
 from __future__ import annotations
 
 import argparse
-import scanpy as sc
-import celltypist
+import hashlib
+from importlib.metadata import version
+from pathlib import Path
+
 import numpy as np
 
 from .utils import load_config
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_model_with_provenance(ctcfg: dict):
+    from celltypist import models
+
+    model_spec = str(ctcfg["model"])
+    model = models.Model.load(model=model_spec)
+    configured_path = Path(model_spec).expanduser()
+    model_path = (
+        configured_path
+        if configured_path.is_file()
+        else Path(models.get_model_path(model_spec))
+    )
+    if not model_path.is_file():
+        raise FileNotFoundError(
+            f"CellTypist loaded '{model_spec}', but its model file could not "
+            "be resolved for provenance recording"
+        )
+
+    actual_sha256 = _sha256(model_path)
+    expected_sha256 = str(ctcfg.get("model_sha256", "")).strip().lower()
+    if expected_sha256 and actual_sha256.lower() != expected_sha256:
+        raise ValueError(
+            f"CellTypist model checksum mismatch for {model_path}: expected "
+            f"{expected_sha256}, observed {actual_sha256}"
+        )
+
+    description = getattr(model, "description", {}) or {}
+    provenance = {
+        "model_identifier": model_spec,
+        "resolved_model_path": str(model_path.resolve()),
+        "model_sha256": actual_sha256,
+        "model_source": str(
+            ctcfg.get("model_source", "https://www.celltypist.org/models")
+        ),
+        "celltypist_version": version("celltypist"),
+    }
+    for field in ("date", "details", "source", "version"):
+        value = description.get(field)
+        if value not in (None, ""):
+            provenance[f"model_{field}"] = str(value)
+    return model, provenance
 
 
 def _to_1d_series(x):
@@ -71,6 +123,9 @@ def _extract_labels_and_confidence(res, obs_names):
 
 
 def main() -> None:
+    import celltypist
+    import scanpy as sc
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--inp", required=True)
@@ -85,6 +140,8 @@ def main() -> None:
     if not bool(ctcfg.get("enabled", True)):
         adata.write_h5ad(args.out)
         return
+
+    model, model_provenance = _load_model_with_provenance(ctcfg)
 
     chunk_size = int(ctcfg.get("chunk_size", 0))
     use_chunking = chunk_size > 0 and adata.n_obs > chunk_size
@@ -113,7 +170,7 @@ def main() -> None:
 
             res = celltypist.annotate(
                 tmp,
-                model=ctcfg["model"],
+                model=model,
                 majority_voting=majority_voting,
             )
 
@@ -132,7 +189,7 @@ def main() -> None:
 
         res = celltypist.annotate(
             tmp,
-            model=ctcfg["model"],
+            model=model,
             majority_voting=majority_voting,
         )
 
@@ -141,6 +198,14 @@ def main() -> None:
         if conf is not None:
             adata.obs["cell_type_confidence"] = conf.to_numpy()
 
+    model_provenance.update(
+        {
+            "majority_voting": majority_voting,
+            "chunk_size": chunk_size,
+            "normalize_target_sum": target_sum,
+        }
+    )
+    adata.uns["celltypist_provenance"] = model_provenance
     adata.write_h5ad(args.out)
 
 

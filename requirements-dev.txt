@@ -1,0 +1,2 @@
+# Development-only tools. Keep these outside the scientific runtime environment.
+ruff==0.12.12

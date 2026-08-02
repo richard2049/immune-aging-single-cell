@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .biological_replicates import attach_biological_replicates
 from .plot_style import PALETTE, apply_publication_style, finalize_and_save, save_placeholder, style_axis
 from .utils import ensure_dir, load_config
 
@@ -47,6 +48,142 @@ def _first_existing(columns: list[str], candidates: list[str]) -> str | None:
     return None
 
 
+def _weighted_capped_allocation(weights: np.ndarray, caps: np.ndarray, total: int) -> np.ndarray:
+    caps = np.asarray(caps, dtype=int)
+    out = np.zeros_like(caps, dtype=int)
+    if caps.size == 0:
+        return out
+
+    total = int(max(total, 0))
+    if total == 0:
+        return out
+    budget = min(total, int(caps.sum()))
+    if budget <= 0:
+        return out
+
+    w = np.asarray(weights, dtype=float)
+    w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
+    if float(w.sum()) <= 0:
+        w = caps.astype(float)
+    if float(w.sum()) <= 0:
+        w = (caps > 0).astype(float)
+
+    quota = (w / float(w.sum())) * float(budget)
+    add = np.floor(quota).astype(int)
+    add = np.minimum(add, caps)
+    out += add
+    remaining = budget - int(out.sum())
+    if remaining <= 0:
+        return out
+
+    frac = quota - np.floor(quota)
+    order = np.argsort(-frac)
+    for idx in order:
+        if remaining <= 0:
+            break
+        if out[idx] >= caps[idx]:
+            continue
+        out[idx] += 1
+        remaining -= 1
+
+    if remaining <= 0:
+        return out
+
+    cap_left = caps - out
+    order = np.argsort(-cap_left)
+    for idx in order:
+        if remaining <= 0:
+            break
+        if cap_left[idx] <= 0:
+            continue
+        take = min(int(cap_left[idx]), remaining)
+        out[idx] += take
+        remaining -= take
+    return out
+
+
+def _allocate_group_samples(group_sizes: pd.Series, max_cells: int, min_cells_per_group: int) -> pd.Series:
+    alloc = pd.Series(0, index=group_sizes.index, dtype=int)
+    if group_sizes.empty or max_cells <= 0:
+        return alloc
+
+    min_cells_per_group = max(int(min_cells_per_group), 1)
+    large_mask = group_sizes >= min_cells_per_group
+    mandatory = pd.Series(0, index=group_sizes.index, dtype=int)
+    mandatory.loc[large_mask] = min_cells_per_group
+    mandatory_total = int(mandatory.sum())
+
+    if mandatory_total >= max_cells:
+        weights = group_sizes.where(large_mask, 0).to_numpy(dtype=float)
+        caps = group_sizes.where(large_mask, 0).to_numpy(dtype=int)
+        alloc_vals = _weighted_capped_allocation(weights=weights, caps=caps, total=max_cells)
+        return pd.Series(alloc_vals, index=group_sizes.index, dtype=int)
+
+    alloc += mandatory
+    remaining_budget = max_cells - int(alloc.sum())
+    if remaining_budget <= 0:
+        return alloc
+
+    caps_left = (group_sizes - alloc).clip(lower=0).to_numpy(dtype=int)
+    weights = caps_left.astype(float)
+    extra = _weighted_capped_allocation(weights=weights, caps=caps_left, total=remaining_budget)
+    alloc += pd.Series(extra, index=group_sizes.index, dtype=int)
+    return alloc
+
+
+def _stratified_sample_indices(
+    valid_idx: np.ndarray,
+    donor_values: np.ndarray,
+    celltype_values: np.ndarray,
+    max_cells: int,
+    min_cells_per_group: int,
+    seed: int,
+) -> np.ndarray:
+    if len(valid_idx) <= max_cells:
+        out = np.asarray(valid_idx, dtype=int)
+        out.sort()
+        return out
+
+    df = pd.DataFrame(
+        {
+            "obs_idx": np.asarray(valid_idx, dtype=int),
+            "donor_id": np.asarray(donor_values, dtype=str),
+            "cell_type": np.asarray(celltype_values, dtype=str),
+        }
+    )
+    group_sizes = df.groupby(["donor_id", "cell_type"], observed=False).size()
+    alloc = _allocate_group_samples(
+        group_sizes=group_sizes,
+        max_cells=int(max_cells),
+        min_cells_per_group=int(min_cells_per_group),
+    )
+
+    rng = np.random.default_rng(seed)
+    chosen: list[np.ndarray] = []
+    grouped = df.groupby(["donor_id", "cell_type"], observed=False)["obs_idx"]
+    for key, obs_idx_series in grouped:
+        take = int(alloc.loc[key]) if key in alloc.index else 0
+        if take <= 0:
+            continue
+        arr = obs_idx_series.to_numpy(dtype=int)
+        if take >= arr.size:
+            chosen.append(arr)
+        else:
+            chosen.append(rng.choice(arr, size=take, replace=False))
+
+    if not chosen:
+        fallback = np.asarray(valid_idx, dtype=int)
+        fallback = rng.choice(fallback, size=max_cells, replace=False)
+        fallback.sort()
+        return fallback
+
+    out = np.concatenate(chosen).astype(int, copy=False)
+    if out.size > max_cells:
+        out = rng.choice(out, size=max_cells, replace=False)
+    out.sort()
+    return out
+
+
 def _write_empty_outputs(
     fig_pred: Path,
     fig_mae: Path,
@@ -60,15 +197,23 @@ def _write_empty_outputs(
     _save_placeholder(fig_mae, "Age Prediction: MAE by Cell Type", msg, dpi)
     pd.DataFrame(
         columns=[
+            "evaluation_level",
             "donor_id",
             "cell_type",
             "age_true",
             "age_pred",
+            "age_base",
             "residual",
             "abs_error",
             "within_5y",
             "n_cells",
+            "n_groups",
             "fold",
+            "model",
+            "params",
+            "selected_model",
+            "selected_params",
+            "is_best_model",
         ]
     ).to_csv(table_pred, index=False)
     pd.DataFrame(
@@ -78,19 +223,52 @@ def _write_empty_outputs(
             "params",
             "alpha",
             "mae",
+            "mae_ci_low",
+            "mae_ci_high",
             "median_ae",
             "rmse",
             "r2",
+            "r2_ci_low",
+            "r2_ci_high",
             "pearson_r",
             "spearman_rho",
             "within_5y_fraction",
             "baseline_mae",
             "delta_mae_vs_baseline",
             "delta_mae_vs_best_ridge",
+            "mae_donor_level",
+            "mae_donor_ci_low",
+            "mae_donor_ci_high",
+            "median_ae_donor_level",
+            "rmse_donor_level",
+            "r2_donor_level",
+            "r2_donor_ci_low",
+            "r2_donor_ci_high",
+            "pearson_r_donor_level",
+            "spearman_rho_donor_level",
+            "within_5y_fraction_donor_level",
+            "baseline_mae_donor_level",
+            "delta_mae_vs_baseline_donor_level",
+            "mae_group_level",
+            "median_ae_group_level",
+            "rmse_group_level",
+            "r2_group_level",
+            "pearson_r_group_level",
+            "spearman_rho_group_level",
+            "within_5y_fraction_group_level",
+            "baseline_mae_group_level",
+            "delta_mae_vs_baseline_group_level",
             "n_samples",
+            "n_groups",
+            "n_donor_samples",
             "n_donors",
             "n_celltypes",
             "n_splits",
+            "primary_level",
+            "donor_balanced_training",
+            "nested_cv_enabled",
+            "inner_cv_folds",
+            "selection_method",
             "is_best_ridge",
             "is_best",
         ]
@@ -103,10 +281,12 @@ def _prepare_aggregated_table(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, l
     latent_key = str(pcfg.get("latent_key", "X_scVI"))
     max_cells = int(pcfg.get("max_cells_for_aggregation", 300000))
     min_cells_per_group = int(pcfg.get("min_cells_per_group", 50))
+    sampling_strategy = str(pcfg.get("sampling_strategy", "stratified")).lower()
     seed = int(cfg.get("run", {}).get("seed", 42))
 
     adata = ad.read_h5ad(inp_h5ad, backed="r")
     try:
+        attach_biological_replicates(adata, cfg)
         obs_cols = list(adata.obs.columns)
 
         age_col = pcfg.get("age_col")
@@ -136,8 +316,20 @@ def _prepare_aggregated_table(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, l
             return pd.DataFrame(), [], "No valid cells after age/donor/cell_type filtering."
 
         if len(valid_idx) > max_cells:
-            rng = np.random.default_rng(seed)
-            valid_idx = np.sort(rng.choice(valid_idx, size=max_cells, replace=False))
+            if sampling_strategy == "random":
+                rng = np.random.default_rng(seed)
+                valid_idx = np.sort(rng.choice(valid_idx, size=max_cells, replace=False))
+            else:
+                donor_values = obs.iloc[valid_idx]["donor_id"].astype(str).to_numpy()
+                celltype_values = obs.iloc[valid_idx]["cell_type"].astype(str).to_numpy()
+                valid_idx = _stratified_sample_indices(
+                    valid_idx=valid_idx,
+                    donor_values=donor_values,
+                    celltype_values=celltype_values,
+                    max_cells=max_cells,
+                    min_cells_per_group=min_cells_per_group,
+                    seed=seed,
+                )
 
         # Prefer indexed extraction to avoid materializing all cells in memory.
         latent_obj = adata.obsm[latent_key]
@@ -281,8 +473,12 @@ def _load_model_builders(cfg: dict, latent_cols: list[str], seed: int):
                         ),
                     }
                 )
-        except ImportError:
-            pass
+        except ImportError as exc:
+            raise ImportError(
+                "age_prediction.model_order requests 'xgboost', but xgboost "
+                "is not installed. Install the tracked environment or remove "
+                "xgboost from model_order in an explicitly reviewed config."
+            ) from exc
 
     if "lightgbm" in model_order:
         try:
@@ -317,23 +513,466 @@ def _load_model_builders(cfg: dict, latent_cols: list[str], seed: int):
                         ),
                     }
                 )
-        except ImportError:
-            pass
+        except ImportError as exc:
+            raise ImportError(
+                "age_prediction.model_order requests 'lightgbm', but lightgbm "
+                "is not installed. Install it or remove lightgbm from "
+                "model_order in an explicitly reviewed config."
+            ) from exc
 
     return candidates
 
 
+def _compute_donor_balanced_sample_weights(donor_ids: np.ndarray) -> np.ndarray:
+    donors = pd.Series(np.asarray(donor_ids, dtype=str))
+    counts = donors.value_counts()
+    weights = donors.map(lambda d: 1.0 / float(counts.loc[d])).to_numpy(dtype=float)
+    valid = np.isfinite(weights) & (weights > 0.0)
+    if not np.any(valid):
+        return np.ones(donors.shape[0], dtype=float)
+    mean_w = float(np.mean(weights[valid]))
+    if not np.isfinite(mean_w) or mean_w <= 0.0:
+        return np.ones(donors.shape[0], dtype=float)
+    return weights / mean_w
+
+
+def _fit_with_optional_sample_weight(model, x_train: pd.DataFrame, y_train: np.ndarray, sample_weight: np.ndarray | None) -> None:
+    if sample_weight is None:
+        model.fit(x_train, y_train)
+        return
+    sw = np.asarray(sample_weight, dtype=float)
+    if sw.shape[0] != y_train.shape[0]:
+        model.fit(x_train, y_train)
+        return
+
+    for kwargs in ({"reg__sample_weight": sw}, {"sample_weight": sw}, {}):
+        try:
+            model.fit(x_train, y_train, **kwargs)
+            return
+        except (TypeError, ValueError):
+            continue
+    model.fit(x_train, y_train)
+
+
+def _safe_correlation(corr_fn, x: np.ndarray, y: np.ndarray) -> float:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if int(np.sum(valid)) < 2:
+        return np.nan
+    x = x[valid]
+    y = y[valid]
+    if np.allclose(np.std(x), 0.0) or np.allclose(np.std(y), 0.0):
+        return np.nan
+    try:
+        return float(corr_fn(x, y)[0])
+    except Exception:
+        return np.nan
+
+
+def _compute_prediction_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_base: np.ndarray) -> dict:
+    yt = np.asarray(y_true, dtype=float)
+    yp = np.asarray(y_pred, dtype=float)
+    yb = np.asarray(y_base, dtype=float)
+    valid = np.isfinite(yt) & np.isfinite(yp) & np.isfinite(yb)
+    if int(np.sum(valid)) == 0:
+        return {
+            "mae": np.nan,
+            "median_ae": np.nan,
+            "rmse": np.nan,
+            "r2": np.nan,
+            "pearson_r": np.nan,
+            "spearman_rho": np.nan,
+            "within_5y_fraction": np.nan,
+            "baseline_mae": np.nan,
+            "delta_mae_vs_baseline": np.nan,
+            "n_samples": 0,
+        }
+
+    yt = yt[valid]
+    yp = yp[valid]
+    yb = yb[valid]
+
+    abs_err = np.abs(yp - yt)
+    base_abs_err = np.abs(yb - yt)
+    ss_tot = float(np.sum((yt - float(np.mean(yt))) ** 2))
+    if ss_tot <= 0.0:
+        r2 = np.nan
+    else:
+        ss_res = float(np.sum((yt - yp) ** 2))
+        r2 = 1.0 - (ss_res / ss_tot)
+
+    mae = float(np.mean(abs_err))
+    baseline_mae = float(np.mean(base_abs_err))
+    return {
+        "mae": mae,
+        "median_ae": float(np.median(abs_err)),
+        "rmse": float(np.sqrt(np.mean((yp - yt) ** 2))),
+        "r2": float(r2),
+        "pearson_r": _safe_correlation(stats.pearsonr, yt, yp),
+        "spearman_rho": _safe_correlation(stats.spearmanr, yt, yp),
+        "within_5y_fraction": float(np.mean(abs_err <= 5.0)),
+        "baseline_mae": baseline_mae,
+        "delta_mae_vs_baseline": float(baseline_mae - mae),
+        "n_samples": int(yt.shape[0]),
+    }
+
+
+def _compute_r2_only(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    yt = np.asarray(y_true, dtype=float)
+    yp = np.asarray(y_pred, dtype=float)
+    valid = np.isfinite(yt) & np.isfinite(yp)
+    yt = yt[valid]
+    yp = yp[valid]
+    if yt.shape[0] < 2:
+        return np.nan
+    ss_tot = float(np.sum((yt - float(np.mean(yt))) ** 2))
+    if ss_tot <= 0.0:
+        return np.nan
+    ss_res = float(np.sum((yt - yp) ** 2))
+    return float(1.0 - (ss_res / ss_tot))
+
+
+def _bootstrap_metric_ci(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    metric: str,
+    n_boot: int,
+    ci: float,
+    seed: int,
+) -> tuple[float, float]:
+    yt = np.asarray(y_true, dtype=float)
+    yp = np.asarray(y_pred, dtype=float)
+    valid = np.isfinite(yt) & np.isfinite(yp)
+    yt = yt[valid]
+    yp = yp[valid]
+    n = int(yt.shape[0])
+    if n == 0:
+        return np.nan, np.nan
+
+    def _eval(a: np.ndarray, b: np.ndarray) -> float:
+        if metric == "mae":
+            return float(np.mean(np.abs(a - b)))
+        if metric == "r2":
+            return _compute_r2_only(a, b)
+        raise ValueError(f"Unsupported bootstrap metric: {metric}")
+
+    if n == 1:
+        v = _eval(yt, yp)
+        return float(v), float(v)
+
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, n, size=(int(max(n_boot, 1)), n))
+    boot_vals = np.empty(idx.shape[0], dtype=float)
+    for i in range(idx.shape[0]):
+        boot_vals[i] = _eval(yt[idx[i]], yp[idx[i]])
+    boot_vals = boot_vals[np.isfinite(boot_vals)]
+    if boot_vals.size == 0:
+        return np.nan, np.nan
+    alpha = (1.0 - float(ci)) / 2.0
+    low = float(np.quantile(boot_vals, alpha))
+    high = float(np.quantile(boot_vals, 1.0 - alpha))
+    return low, high
+
+
+def _bootstrap_mae_r2_ci_from_pred_frame(
+    pred_df: pd.DataFrame,
+    n_boot: int,
+    ci: float,
+    seed: int,
+) -> dict:
+    if pred_df.empty:
+        return {
+            "mae_ci_low": np.nan,
+            "mae_ci_high": np.nan,
+            "r2_ci_low": np.nan,
+            "r2_ci_high": np.nan,
+        }
+    y_true = pred_df["age_true"].to_numpy(dtype=float)
+    y_pred = pred_df["age_pred"].to_numpy(dtype=float)
+    mae_low, mae_high = _bootstrap_metric_ci(y_true, y_pred, metric="mae", n_boot=n_boot, ci=ci, seed=seed)
+    r2_low, r2_high = _bootstrap_metric_ci(y_true, y_pred, metric="r2", n_boot=n_boot, ci=ci, seed=seed + 17)
+    return {
+        "mae_ci_low": mae_low,
+        "mae_ci_high": mae_high,
+        "r2_ci_low": r2_low,
+        "r2_ci_high": r2_high,
+    }
+
+
+def _build_prediction_frames(
+    agg_subset: pd.DataFrame,
+    y_pred: np.ndarray,
+    y_base: np.ndarray,
+    fold_id: np.ndarray,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    pred_group = agg_subset[["donor_id", "cell_type", "age", "n_cells"]].copy()
+    pred_group = pred_group.rename(columns={"age": "age_true"})
+    pred_group["evaluation_level"] = "donor_celltype"
+    pred_group["age_pred"] = y_pred
+    pred_group["age_base"] = y_base
+    pred_group["residual"] = pred_group["age_pred"] - pred_group["age_true"]
+    pred_group["abs_error"] = np.abs(pred_group["residual"])
+    pred_group["within_5y"] = pred_group["abs_error"] <= 5.0
+    pred_group["fold"] = fold_id
+    pred_group["n_groups"] = 1
+
+    pred_donor = _aggregate_group_predictions_to_donor(pred_group)
+    return pred_group, pred_donor
+
+
+def _run_group_cv_predictions_for_candidate(
+    agg_subset: pd.DataFrame,
+    latent_cols: list[str],
+    splits: list[tuple[np.ndarray, np.ndarray]],
+    cand: dict,
+    clip_predictions: bool,
+    donor_balanced_training: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    y = agg_subset["age"].to_numpy(dtype=float)
+    groups = agg_subset["donor_id"].astype(str).to_numpy()
+    x = agg_subset[latent_cols + ["cell_type"]].copy()
+
+    y_pred = np.full_like(y, np.nan, dtype=float)
+    y_base = np.full_like(y, np.nan, dtype=float)
+    fold_id = np.full(y.shape[0], -1, dtype=int)
+
+    for fold, (tr, te) in enumerate(splits):
+        model = cand["build"]()
+        train_weights = None
+        if donor_balanced_training:
+            train_weights = _compute_donor_balanced_sample_weights(groups[tr])
+        _fit_with_optional_sample_weight(model, x.iloc[tr], y[tr], sample_weight=train_weights)
+        fold_pred = model.predict(x.iloc[te])
+        if clip_predictions:
+            lo = float(np.min(y[tr]))
+            hi = float(np.max(y[tr]))
+            fold_pred = np.clip(fold_pred, lo, hi)
+        y_pred[te] = fold_pred
+        donor_train_age = agg_subset.iloc[tr].groupby("donor_id", observed=False)["age"].median()
+        if donor_train_age.empty:
+            y_base[te] = np.mean(y[tr])
+        else:
+            y_base[te] = float(donor_train_age.mean())
+        fold_id[te] = fold
+
+    return y_pred, y_base, fold_id
+
+
+def _metrics_row_from_predictions(
+    pred_group: pd.DataFrame,
+    pred_donor: pd.DataFrame,
+    *,
+    model: str,
+    family: str,
+    params_json: str,
+    alpha: float,
+    primary_level: str,
+    donor_balanced_training: bool,
+    nested_cv_enabled: bool,
+    inner_cv_folds: int,
+    selection_method: str,
+    n_donors: int,
+    n_celltypes: int,
+    n_splits: int,
+    bootstrap_iterations: int,
+    bootstrap_ci: float,
+    seed: int,
+) -> dict:
+    group_metrics = _compute_prediction_metrics(
+        y_true=pred_group["age_true"].to_numpy(dtype=float),
+        y_pred=pred_group["age_pred"].to_numpy(dtype=float),
+        y_base=pred_group["age_base"].to_numpy(dtype=float),
+    )
+    donor_metrics = _compute_prediction_metrics(
+        y_true=pred_donor["age_true"].to_numpy(dtype=float),
+        y_pred=pred_donor["age_pred"].to_numpy(dtype=float),
+        y_base=pred_donor["age_base"].to_numpy(dtype=float),
+    )
+    if primary_level == "donor":
+        primary_metrics = donor_metrics
+        primary_pred = pred_donor
+    else:
+        primary_metrics = group_metrics
+        primary_pred = pred_group
+
+    primary_ci = _bootstrap_mae_r2_ci_from_pred_frame(
+        primary_pred,
+        n_boot=bootstrap_iterations,
+        ci=bootstrap_ci,
+        seed=seed,
+    )
+    donor_ci = (
+        primary_ci
+        if primary_level == "donor"
+        else _bootstrap_mae_r2_ci_from_pred_frame(
+            pred_donor,
+            n_boot=bootstrap_iterations,
+            ci=bootstrap_ci,
+            seed=seed + 97,
+        )
+    )
+
+    return {
+        "model": model,
+        "family": family,
+        "params": params_json,
+        "alpha": alpha,
+        "mae": primary_metrics["mae"],
+        "mae_ci_low": primary_ci["mae_ci_low"],
+        "mae_ci_high": primary_ci["mae_ci_high"],
+        "median_ae": primary_metrics["median_ae"],
+        "rmse": primary_metrics["rmse"],
+        "r2": primary_metrics["r2"],
+        "r2_ci_low": primary_ci["r2_ci_low"],
+        "r2_ci_high": primary_ci["r2_ci_high"],
+        "pearson_r": primary_metrics["pearson_r"],
+        "spearman_rho": primary_metrics["spearman_rho"],
+        "within_5y_fraction": primary_metrics["within_5y_fraction"],
+        "baseline_mae": primary_metrics["baseline_mae"],
+        "delta_mae_vs_baseline": primary_metrics["delta_mae_vs_baseline"],
+        "mae_donor_level": donor_metrics["mae"],
+        "mae_donor_ci_low": donor_ci["mae_ci_low"],
+        "mae_donor_ci_high": donor_ci["mae_ci_high"],
+        "median_ae_donor_level": donor_metrics["median_ae"],
+        "rmse_donor_level": donor_metrics["rmse"],
+        "r2_donor_level": donor_metrics["r2"],
+        "r2_donor_ci_low": donor_ci["r2_ci_low"],
+        "r2_donor_ci_high": donor_ci["r2_ci_high"],
+        "pearson_r_donor_level": donor_metrics["pearson_r"],
+        "spearman_rho_donor_level": donor_metrics["spearman_rho"],
+        "within_5y_fraction_donor_level": donor_metrics["within_5y_fraction"],
+        "baseline_mae_donor_level": donor_metrics["baseline_mae"],
+        "delta_mae_vs_baseline_donor_level": donor_metrics["delta_mae_vs_baseline"],
+        "mae_group_level": group_metrics["mae"],
+        "median_ae_group_level": group_metrics["median_ae"],
+        "rmse_group_level": group_metrics["rmse"],
+        "r2_group_level": group_metrics["r2"],
+        "pearson_r_group_level": group_metrics["pearson_r"],
+        "spearman_rho_group_level": group_metrics["spearman_rho"],
+        "within_5y_fraction_group_level": group_metrics["within_5y_fraction"],
+        "baseline_mae_group_level": group_metrics["baseline_mae"],
+        "delta_mae_vs_baseline_group_level": group_metrics["delta_mae_vs_baseline"],
+        "n_samples": int(primary_metrics["n_samples"]),
+        "n_groups": int(pred_group.shape[0]),
+        "n_donor_samples": int(pred_donor.shape[0]),
+        "n_donors": int(n_donors),
+        "n_celltypes": int(n_celltypes),
+        "n_splits": int(n_splits),
+        "primary_level": primary_level,
+        "donor_balanced_training": donor_balanced_training,
+        "nested_cv_enabled": nested_cv_enabled,
+        "inner_cv_folds": int(inner_cv_folds),
+        "selection_method": selection_method,
+    }
+
+
+def _select_inner_best_candidate(
+    agg_train: pd.DataFrame,
+    latent_cols: list[str],
+    candidates: list[dict],
+    inner_cv_folds: int,
+    clip_predictions: bool,
+    donor_balanced_training: bool,
+    primary_level: str,
+) -> tuple[dict, float]:
+    from sklearn.model_selection import GroupKFold
+
+    y_train = agg_train["age"].to_numpy(dtype=float)
+    groups_train = agg_train["donor_id"].astype(str).to_numpy()
+    unique_train_groups = np.unique(groups_train)
+    n_inner = min(int(inner_cv_folds), int(unique_train_groups.size))
+    if n_inner < 2:
+        return candidates[0], np.inf
+
+    splitter = GroupKFold(n_splits=n_inner)
+    inner_splits = list(splitter.split(np.zeros_like(y_train), y_train, groups=groups_train))
+
+    best_cand = candidates[0]
+    best_score = np.inf
+    for cand in candidates:
+        y_pred, y_base, fold_id = _run_group_cv_predictions_for_candidate(
+            agg_subset=agg_train,
+            latent_cols=latent_cols,
+            splits=inner_splits,
+            cand=cand,
+            clip_predictions=clip_predictions,
+            donor_balanced_training=donor_balanced_training,
+        )
+        pred_group, pred_donor = _build_prediction_frames(agg_subset=agg_train, y_pred=y_pred, y_base=y_base, fold_id=fold_id)
+        score_metrics = (
+            _compute_prediction_metrics(
+                y_true=pred_donor["age_true"].to_numpy(dtype=float),
+                y_pred=pred_donor["age_pred"].to_numpy(dtype=float),
+                y_base=pred_donor["age_base"].to_numpy(dtype=float),
+            )
+            if primary_level == "donor"
+            else _compute_prediction_metrics(
+                y_true=pred_group["age_true"].to_numpy(dtype=float),
+                y_pred=pred_group["age_pred"].to_numpy(dtype=float),
+                y_base=pred_group["age_base"].to_numpy(dtype=float),
+            )
+        )
+        score = float(score_metrics["mae"])
+        if np.isfinite(score) and score < best_score:
+            best_score = score
+            best_cand = cand
+    return best_cand, best_score
+
+
+def _aggregate_group_predictions_to_donor(pred_group: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict] = []
+    for donor_id, sub in pred_group.groupby("donor_id", observed=True):
+        if sub.empty:
+            continue
+        weights = sub["n_cells"].to_numpy(dtype=float)
+        weights = np.where(np.isfinite(weights) & (weights > 0.0), weights, 0.0)
+        if float(weights.sum()) <= 0.0:
+            weights = np.ones(sub.shape[0], dtype=float)
+        age_true = float(np.median(sub["age_true"].to_numpy(dtype=float)))
+        age_pred = float(np.average(sub["age_pred"].to_numpy(dtype=float), weights=weights))
+        age_base = float(np.average(sub["age_base"].to_numpy(dtype=float), weights=weights))
+        rows.append(
+            {
+                "evaluation_level": "donor",
+                "donor_id": str(donor_id),
+                "cell_type": "__all__",
+                "age_true": age_true,
+                "age_pred": age_pred,
+                "age_base": age_base,
+                "n_cells": int(np.sum(sub["n_cells"].to_numpy(dtype=int))),
+                "n_groups": int(sub.shape[0]),
+                "fold": int(sub["fold"].iloc[0]) if sub.shape[0] > 0 else -1,
+            }
+        )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out["residual"] = out["age_pred"] - out["age_true"]
+    out["abs_error"] = np.abs(out["residual"])
+    out["within_5y"] = out["abs_error"] <= 5.0
+    return out
+
+
 def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
-    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
     from sklearn.model_selection import GroupKFold
 
     pcfg = cfg.get("age_prediction", {})
     cv_folds = int(pcfg.get("cv_folds", 5))
+    nested_cv_enabled = bool(pcfg.get("nested_cv", True))
+    inner_cv_folds = int(pcfg.get("nested_inner_cv_folds", 3))
+    clip_predictions = bool(pcfg.get("clip_predictions_to_train_age_range", True))
+    donor_balanced_training = bool(pcfg.get("donor_balanced_training", True))
+    primary_level_cfg = str(pcfg.get("primary_metric_level", "donor")).strip().lower()
+    primary_level = "donor" if primary_level_cfg not in {"donor", "donor_celltype"} else primary_level_cfg
+    bootstrap_iterations = int(pcfg.get("bootstrap_iterations", 2000))
+    bootstrap_ci = float(pcfg.get("bootstrap_ci", 0.95))
     seed = int(cfg.get("run", {}).get("seed", 42))
 
     y = agg["age"].to_numpy(dtype=float)
     groups = agg["donor_id"].astype(str).to_numpy()
-    X = agg[latent_cols + ["cell_type"]].copy()
+    x = agg[latent_cols + ["cell_type"]].copy()
 
     unique_groups = np.unique(groups)
     if unique_groups.size < 3:
@@ -343,7 +982,14 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
         raise ValueError("Not enough donor groups for CV.")
 
     splitter = GroupKFold(n_splits=n_splits)
-    splits = list(splitter.split(X, y, groups=groups))
+    splits = list(splitter.split(x, y, groups=groups))
+    for fold, (train_idx, test_idx) in enumerate(splits):
+        overlap = set(groups[train_idx]).intersection(groups[test_idx])
+        if overlap:
+            raise ValueError(
+                f"Cross-validation fold {fold} leaks "
+                f"{len(overlap)} biological replicate(s)."
+            )
 
     candidates = _load_model_builders(cfg, latent_cols=latent_cols, seed=seed)
     if not candidates:
@@ -351,63 +997,158 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
 
     metrics_rows = []
     pred_rows = []
-    for cand in candidates:
-        model = cand["build"]()
-        y_pred = np.full_like(y, np.nan, dtype=float)
-        y_base = np.full_like(y, np.nan, dtype=float)
-        fold_id = np.full(y.shape[0], -1, dtype=int)
-
-        for fold, (tr, te) in enumerate(splits):
-            model.fit(X.iloc[tr], y[tr])
-            y_pred[te] = model.predict(X.iloc[te])
-            y_base[te] = np.mean(y[tr])
-            fold_id[te] = fold
-
-        abs_err = np.abs(y_pred - y)
-        mae = float(mean_absolute_error(y, y_pred))
-        rmse = float(np.sqrt(mean_squared_error(y, y_pred)))
-        r2 = float(r2_score(y, y_pred))
-        pearson_r = float(stats.pearsonr(y, y_pred)[0]) if len(y) > 1 else np.nan
-        spearman_rho = float(stats.spearmanr(y, y_pred)[0]) if len(y) > 1 else np.nan
-        baseline_mae = float(mean_absolute_error(y, y_base))
-
+    for i, cand in enumerate(candidates):
+        y_pred, y_base, fold_id = _run_group_cv_predictions_for_candidate(
+            agg_subset=agg,
+            latent_cols=latent_cols,
+            splits=splits,
+            cand=cand,
+            clip_predictions=clip_predictions,
+            donor_balanced_training=donor_balanced_training,
+        )
+        pred_group, pred_donor = _build_prediction_frames(agg_subset=agg, y_pred=y_pred, y_base=y_base, fold_id=fold_id)
+        params_json = json.dumps(cand["params"], sort_keys=True)
         metrics_rows.append(
-            {
-                "model": cand["model"],
-                "family": cand["family"],
-                "params": json.dumps(cand["params"], sort_keys=True),
-                "alpha": float(cand["params"].get("alpha", np.nan)),
-                "mae": mae,
-                "median_ae": float(np.median(abs_err)),
-                "rmse": rmse,
-                "r2": r2,
-                "pearson_r": pearson_r,
-                "spearman_rho": spearman_rho,
-                "within_5y_fraction": float(np.mean(abs_err <= 5.0)),
-                "baseline_mae": baseline_mae,
-                "delta_mae_vs_baseline": baseline_mae - mae,
-                "n_samples": int(len(y)),
-                "n_donors": int(unique_groups.size),
-                "n_celltypes": int(agg["cell_type"].nunique()),
-                "n_splits": int(n_splits),
-            }
+            _metrics_row_from_predictions(
+                pred_group=pred_group,
+                pred_donor=pred_donor,
+                model=cand["model"],
+                family=cand["family"],
+                params_json=params_json,
+                alpha=float(cand["params"].get("alpha", np.nan)),
+                primary_level=primary_level,
+                donor_balanced_training=donor_balanced_training,
+                nested_cv_enabled=False,
+                inner_cv_folds=0,
+                selection_method="fixed_outer_cv",
+                n_donors=int(unique_groups.size),
+                n_celltypes=int(agg["cell_type"].nunique()),
+                n_splits=int(n_splits),
+                bootstrap_iterations=bootstrap_iterations,
+                bootstrap_ci=bootstrap_ci,
+                seed=seed + (i * 131),
+            )
         )
 
-        pred = agg[["donor_id", "cell_type", "age", "n_cells"]].copy()
-        pred = pred.rename(columns={"age": "age_true"})
-        pred["model"] = cand["model"]
-        pred["params"] = json.dumps(cand["params"], sort_keys=True)
-        pred["age_pred"] = y_pred
-        pred["residual"] = pred["age_pred"] - pred["age_true"]
-        pred["abs_error"] = np.abs(pred["residual"])
-        pred["within_5y"] = pred["abs_error"] <= 5.0
-        pred["fold"] = fold_id
-        pred_rows.append(pred)
+        pred_group["model"] = cand["model"]
+        pred_group["params"] = params_json
+        pred_group["selected_model"] = np.nan
+        pred_group["selected_params"] = np.nan
+        pred_donor["model"] = cand["model"]
+        pred_donor["params"] = params_json
+        pred_donor["selected_model"] = np.nan
+        pred_donor["selected_params"] = np.nan
+        pred_rows.append(pred_group)
+        pred_rows.append(pred_donor)
+
+    if nested_cv_enabled:
+        y_pred_nested = np.full_like(y, np.nan, dtype=float)
+        y_base_nested = np.full_like(y, np.nan, dtype=float)
+        fold_nested = np.full(y.shape[0], -1, dtype=int)
+        selected_model = np.empty(y.shape[0], dtype=object)
+        selected_params = np.empty(y.shape[0], dtype=object)
+        selected_model[:] = ""
+        selected_params[:] = ""
+        fold_selection_records: list[dict] = []
+
+        for outer_fold, (tr, te) in enumerate(splits):
+            agg_train = agg.iloc[tr].reset_index(drop=True)
+            best_cand, inner_score = _select_inner_best_candidate(
+                agg_train=agg_train,
+                latent_cols=latent_cols,
+                candidates=candidates,
+                inner_cv_folds=inner_cv_folds,
+                clip_predictions=clip_predictions,
+                donor_balanced_training=donor_balanced_training,
+                primary_level=primary_level,
+            )
+            model = best_cand["build"]()
+            train_weights = None
+            if donor_balanced_training:
+                train_weights = _compute_donor_balanced_sample_weights(groups[tr])
+            _fit_with_optional_sample_weight(model, x.iloc[tr], y[tr], sample_weight=train_weights)
+            fold_pred = model.predict(x.iloc[te])
+            if clip_predictions:
+                lo = float(np.min(y[tr]))
+                hi = float(np.max(y[tr]))
+                fold_pred = np.clip(fold_pred, lo, hi)
+            y_pred_nested[te] = fold_pred
+            donor_train_age = agg.iloc[tr].groupby("donor_id", observed=False)["age"].median()
+            if donor_train_age.empty:
+                y_base_nested[te] = np.mean(y[tr])
+            else:
+                y_base_nested[te] = float(donor_train_age.mean())
+            fold_nested[te] = outer_fold
+
+            best_params_json = json.dumps(best_cand["params"], sort_keys=True)
+            selected_model[te] = str(best_cand["model"])
+            selected_params[te] = best_params_json
+            fold_selection_records.append(
+                {
+                    "outer_fold": int(outer_fold),
+                    "selected_model": str(best_cand["model"]),
+                    "selected_params": best_params_json,
+                    "inner_mae": float(inner_score),
+                }
+            )
+
+        pred_group_nested, pred_donor_nested = _build_prediction_frames(
+            agg_subset=agg,
+            y_pred=y_pred_nested,
+            y_base=y_base_nested,
+            fold_id=fold_nested,
+        )
+        pred_group_nested["selected_model"] = selected_model
+        pred_group_nested["selected_params"] = selected_params
+        fold_to_model = {r["outer_fold"]: r["selected_model"] for r in fold_selection_records}
+        fold_to_params = {r["outer_fold"]: r["selected_params"] for r in fold_selection_records}
+        pred_donor_nested["selected_model"] = pred_donor_nested["fold"].map(fold_to_model).fillna("")
+        pred_donor_nested["selected_params"] = pred_donor_nested["fold"].map(fold_to_params).fillna("")
+
+        nested_params_json = json.dumps(
+            {
+                "inner_cv_folds": int(inner_cv_folds),
+                "selection_metric": "mae",
+                "selection_level": primary_level,
+            },
+            sort_keys=True,
+        )
+        metrics_rows.append(
+            _metrics_row_from_predictions(
+                pred_group=pred_group_nested,
+                pred_donor=pred_donor_nested,
+                model="nested_selected",
+                family="meta",
+                params_json=nested_params_json,
+                alpha=np.nan,
+                primary_level=primary_level,
+                donor_balanced_training=donor_balanced_training,
+                nested_cv_enabled=True,
+                inner_cv_folds=int(inner_cv_folds),
+                selection_method="nested_outer_inner",
+                n_donors=int(unique_groups.size),
+                n_celltypes=int(agg["cell_type"].nunique()),
+                n_splits=int(n_splits),
+                bootstrap_iterations=bootstrap_iterations,
+                bootstrap_ci=bootstrap_ci,
+                seed=seed + 7001,
+            )
+        )
+        pred_group_nested["model"] = "nested_selected"
+        pred_group_nested["params"] = nested_params_json
+        pred_donor_nested["model"] = "nested_selected"
+        pred_donor_nested["params"] = nested_params_json
+        pred_rows.append(pred_group_nested)
+        pred_rows.append(pred_donor_nested)
 
     metrics = pd.DataFrame(metrics_rows).sort_values("mae", ascending=True).reset_index(drop=True)
     metrics["is_best"] = False
     if not metrics.empty:
-        metrics.loc[0, "is_best"] = True
+        nested_mask = metrics["model"].eq("nested_selected")
+        if nested_cv_enabled and nested_mask.any():
+            metrics.loc[nested_mask, "is_best"] = True
+        else:
+            metrics.loc[0, "is_best"] = True
 
     ridge_mask = metrics["model"].eq("ridge")
     metrics["is_best_ridge"] = False
@@ -422,7 +1163,10 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
     best_row = metrics.loc[metrics["is_best"]].iloc[0]
     best_mask = (pred_all["model"] == best_row["model"]) & (pred_all["params"] == best_row["params"])
     pred_all["is_best_model"] = best_mask
-    pred_all = pred_all.sort_values(["is_best_model", "model", "donor_id", "cell_type"], ascending=[False, True, True, True])
+    pred_all = pred_all.sort_values(
+        ["is_best_model", "model", "evaluation_level", "donor_id", "cell_type"],
+        ascending=[False, True, True, True, True],
+    )
 
     return pred_all, metrics
 
@@ -456,10 +1200,18 @@ def _build_model_comparison_summary(pred_all: pd.DataFrame, metrics: pd.DataFram
         return pd.DataFrame(columns=SUMMARY_COLUMNS)
 
     pred_all = pred_all.copy()
-    pred_all["model_key"] = pred_all["model"] + "||" + pred_all["params"].astype(str)
+    if "evaluation_level" in pred_all.columns:
+        primary_rows = pred_all[pred_all["evaluation_level"].astype(str) == "donor"].copy()
+        if primary_rows.empty:
+            primary_rows = pred_all[pred_all["evaluation_level"].astype(str) == "donor_celltype"].copy()
+        if primary_rows.empty:
+            primary_rows = pred_all.copy()
+    else:
+        primary_rows = pred_all.copy()
+    primary_rows["model_key"] = primary_rows["model"] + "||" + primary_rows["params"].astype(str)
 
     fold_mae = (
-        pred_all.groupby(["model", "params", "model_key", "fold"], observed=False)["abs_error"]
+        primary_rows.groupby(["model", "params", "model_key", "fold"], observed=False)["abs_error"]
         .mean()
         .reset_index(name="fold_mae")
     )
@@ -522,7 +1274,11 @@ def _build_model_comparison_summary(pred_all: pd.DataFrame, metrics: pd.DataFram
     return out.sort_values(["candidate_is_best", "delta_mae_mean"], ascending=[False, False]).reset_index(drop=True)
 
 
-def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path: Path, dpi: int) -> None:
+def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path: Path, dpi: int, density_label: str) -> None:
+    if pred_best.empty:
+        _save_placeholder(path, "Age Prediction: Observed vs Predicted", "No prediction rows available.", dpi)
+        return
+
     best = metrics.loc[metrics["is_best"]].iloc[0]
     x = pred_best["age_true"].to_numpy(dtype=float)
     y = pred_best["age_pred"].to_numpy(dtype=float)
@@ -530,7 +1286,7 @@ def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path:
     fig, ax = plt.subplots(figsize=(6.5, 6.0))
     hb = ax.hexbin(x, y, gridsize=32, cmap="Blues", mincnt=1)
     cbar = fig.colorbar(hb, ax=ax, shrink=0.8)
-    cbar.set_label("Donor-celltype groups")
+    cbar.set_label(density_label)
     ax.scatter(x, y, s=10, alpha=0.25, color=PALETTE["primary"])
     mn = float(np.nanmin([x.min(), y.min()]))
     mx = float(np.nanmax([x.max(), y.max()]))
@@ -545,10 +1301,16 @@ def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path:
     ax.set_title(f"Chronological age prediction (best model: {best['model']})")
     top_models = metrics.head(min(3, metrics.shape[0]))[["model", "mae"]]
     top_txt = "; ".join([f"{r.model}:{r.mae:.2f}" for r in top_models.itertuples(index=False)])
+    mae_txt = f"{best['mae']:.2f}"
+    if np.isfinite(float(best.get("mae_ci_low", np.nan))) and np.isfinite(float(best.get("mae_ci_high", np.nan))):
+        mae_txt += f" [{float(best['mae_ci_low']):.2f}, {float(best['mae_ci_high']):.2f}]"
+    r2_txt = f"{best['r2']:.3f}"
+    if np.isfinite(float(best.get("r2_ci_low", np.nan))) and np.isfinite(float(best.get("r2_ci_high", np.nan))):
+        r2_txt += f" [{float(best['r2_ci_low']):.3f}, {float(best['r2_ci_high']):.3f}]"
     txt = (
         f"Model={best['model']}\n"
-        f"MAE={best['mae']:.2f}, median AE={best['median_ae']:.2f}, RMSE={best['rmse']:.2f}\n"
-        f"R2={best['r2']:.3f}, Pearson r={best['pearson_r']:.3f}, within 5y={best['within_5y_fraction']:.2%}\n"
+        f"MAE={mae_txt}, median AE={best['median_ae']:.2f}, RMSE={best['rmse']:.2f}\n"
+        f"R2={r2_txt}, Pearson r={best['pearson_r']:.3f}, within 5y={best['within_5y_fraction']:.2%}\n"
         f"Top MAE: {top_txt}"
     )
     ax.text(0.03, 0.97, txt, transform=ax.transAxes, va="top", ha="left", fontsize=10)
@@ -557,8 +1319,15 @@ def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path:
     finalize_and_save(fig, path, dpi)
 
 
-def _plot_mae_by_celltype(pred_best: pd.DataFrame, best_row: pd.Series, path: Path, top_n: int, dpi: int) -> None:
-    ct = (
+def _plot_mae_by_celltype(
+    pred_best: pd.DataFrame,
+    best_row: pd.Series,
+    path: Path,
+    top_n: int,
+    min_groups_for_plot: int,
+    dpi: int,
+) -> None:
+    ct_all = (
         pred_best.groupby("cell_type", observed=False)
         .agg(
             mae=("abs_error", "mean"),
@@ -568,25 +1337,43 @@ def _plot_mae_by_celltype(pred_best: pd.DataFrame, best_row: pd.Series, path: Pa
         )
         .sort_values("mae", ascending=False)
     )
-    if ct.empty:
+    if ct_all.empty:
         _save_placeholder(path, "Age Prediction: MAE by Cell Type", "No prediction rows available.", dpi)
         return
 
+    ct = ct_all[ct_all["n_groups"] >= int(min_groups_for_plot)].copy()
+    if ct.empty:
+        _save_placeholder(
+            path,
+            "Age Prediction: MAE by Cell Type",
+            f"No cell types meet n_groups >= {int(min_groups_for_plot)}.",
+            dpi,
+        )
+        return
+
     ct = ct.head(top_n).sort_values("mae", ascending=True)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    bars = ax.barh(ct.index, ct["mae"].to_numpy(), color=PALETTE["primary"])
+    fig, ax = plt.subplots(figsize=(10.5, 6.3))
+    ax.barh(ct.index, ct["mae"].to_numpy(), color=PALETTE["primary"])
     ax.set_xlabel("Mean absolute error (years)")
     ax.set_ylabel("Cell type")
-    ax.set_title(f"Cross-validated age prediction error by cell type\nBest model: {best_row['model']}")
+    ax.set_title(
+        f"Cross-validated age prediction error by cell type\n"
+        f"Best model: {best_row['model']} (n_groups>={int(min_groups_for_plot)})"
+    )
+    xmax = float(np.nanmax(ct["mae"].to_numpy())) if len(ct) > 0 else 1.0
+    annotation_x = xmax * 1.03
+    ax.set_xlim(0.0, xmax * 1.70)
     for i, (_, row) in enumerate(ct.iterrows()):
         ax.text(
-            row["mae"],
+            annotation_x,
             i,
-            f"  n={int(row['n_groups'])}, medAE={row['median_ae']:.1f}, within5y={row['within_5y_fraction']:.1%}",
+            f"MAE={row['mae']:.1f}, n={int(row['n_groups'])}, medAE={row['median_ae']:.1f}, within5y={row['within_5y_fraction']:.1%}",
             va="center",
+            ha="left",
             fontsize=8,
+            color="#333333",
+            clip_on=False,
         )
-    ax.bar_label(bars, labels=[f"{v:.1f}" for v in ct["mae"].to_numpy()], padding=3, fontsize=8)
     style_axis(ax, grid="x")
     finalize_and_save(fig, path, dpi)
 
@@ -606,6 +1393,7 @@ def main() -> None:
     pcfg = cfg.get("age_prediction", {})
     dpi = int(pcfg.get("dpi", cfg.get("report", {}).get("dpi", 150)))
     top_n_celltypes = int(pcfg.get("top_n_celltypes_plot", 12))
+    min_groups_for_mae_plot = int(pcfg.get("min_groups_for_mae_plot", 20))
 
     fig_pred = Path(args.fig_pred)
     fig_mae = Path(args.fig_mae)
@@ -646,10 +1434,21 @@ def main() -> None:
             msg=err or "No aggregated donor-celltype rows available.",
         )
         return
+    print(
+        "[age_prediction] "
+        f"prepared {len(agg):,} replicate-cell-type groups from "
+        f"{agg['donor_id'].nunique():,} replicates",
+        flush=True,
+    )
 
     try:
+        print("[age_prediction] evaluating grouped CV models", flush=True)
         pred_all, metrics = _evaluate_candidates(agg=agg, latent_cols=latent_cols, cfg=cfg)
     except Exception as exc:
+        print(
+            f"[age_prediction] grouped CV failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
         _write_empty_outputs(
             fig_pred=fig_pred,
             fig_mae=fig_mae,
@@ -662,13 +1461,37 @@ def main() -> None:
         return
 
     summary = _build_model_comparison_summary(pred_all=pred_all, metrics=metrics, cfg=cfg)
-    pred_all.to_csv(table_pred, index=False)
+    grouping_col = str(pcfg.get("donor_col", "donor_id"))
+    pred_out = pred_all.rename(columns={"donor_id": grouping_col})
+    metrics["grouping_id_column"] = grouping_col
+    summary["grouping_id_column"] = grouping_col
+    pred_out.to_csv(table_pred, index=False)
     metrics.to_csv(table_metrics, index=False)
     summary.to_csv(table_summary, index=False)
     best_row = metrics.loc[metrics["is_best"]].iloc[0]
     pred_best = pred_all[pred_all["is_best_model"]].copy()
-    _plot_observed_vs_pred(pred_best, metrics, fig_pred, dpi)
-    _plot_mae_by_celltype(pred_best, best_row=best_row, path=fig_mae, top_n=top_n_celltypes, dpi=dpi)
+    if "evaluation_level" in pred_best.columns:
+        pred_best_donor = pred_best[pred_best["evaluation_level"].astype(str) == "donor"].copy()
+        pred_best_group = pred_best[pred_best["evaluation_level"].astype(str) == "donor_celltype"].copy()
+    else:
+        pred_best_donor = pd.DataFrame()
+        pred_best_group = pd.DataFrame()
+    if pred_best_donor.empty:
+        pred_best_donor = pred_best
+        density_label = "Donor-celltype groups"
+    else:
+        density_label = "Donors"
+    if pred_best_group.empty:
+        pred_best_group = pred_best
+    _plot_observed_vs_pred(pred_best_donor, metrics, fig_pred, dpi, density_label=density_label)
+    _plot_mae_by_celltype(
+        pred_best_group,
+        best_row=best_row,
+        path=fig_mae,
+        top_n=top_n_celltypes,
+        min_groups_for_plot=min_groups_for_mae_plot,
+        dpi=dpi,
+    )
 
 
 if __name__ == "__main__":

@@ -4,11 +4,13 @@ Modular Snakemake pipeline for PBMC single-cell RNA-seq analysis focused on immu
 
 Stack: `scanpy` + `scvi-tools` + `CellTypist`.
 
-## What This Demonstrates
+## Key Properties
 - Reproducible, config-driven workflow design (`Snakemake` + YAML configs).
 - Memory-safe single-cell processing (sparse counts, no dense graph conversion).
-- Practical modeling steps used in biotech workflows: QC, doublet removal, scVI latent modeling, clustering, automated annotation.
-- Recruiter-friendly outputs: `.h5ad` intermediates, plots, and summary tables.
+- Standard single-cell analysis stages: QC, doublet removal, scVI latent
+  modeling, clustering, and automated annotation.
+- Structured, inspectable outputs: `.h5ad` intermediates, figures, and summary
+  tables.
 
 ## Pipeline
 1. `ingest` -> `results/01_raw.h5ad`
@@ -22,6 +24,8 @@ Stack: `scanpy` + `scvi-tools` + `CellTypist`.
 9. `composition_age` -> age-stratified composition figures + trend tables
 10. `signature_age` -> donor-level signature trends vs age (figures + stats)
 11. `age_prediction` -> chronological age prediction from donor-celltype scVI embeddings
+12. `sensitivity_age` -> parameter-sensitivity runs for age analyses
+13. `supplementary_age` -> supplementary summary figures for effect sizes and stability
 
 ## Quickstart (Demo)
 ```bash
@@ -30,6 +34,23 @@ conda activate immune-aging-scvi
 
 snakemake -s workflows/Snakefile -c 1 --configfile config/config.demo.yaml
 ```
+
+For an existing environment, apply the tracked dependency contract explicitly:
+
+```powershell
+$mamba = Join-Path ((conda info --base).Trim()) "Library\bin\mamba.exe"
+if (-not (Test-Path $mamba)) { throw "mamba.exe not found at $mamba" }
+& $mamba env update -n immune-aging-scvi -f environment.yml --prune
+if ($LASTEXITCODE -ne 0) { throw "Environment update failed; do not run validation in the stale environment." }
+conda activate immune-aging-scvi
+python -c "import scanpy, scvi, celltypist, xgboost; print(scanpy.__version__, scvi.__version__, celltypist.__version__, xgboost.__version__)"
+if ($LASTEXITCODE -ne 0) { throw "Required scientific packages are unavailable." }
+```
+
+The update can require a full dependency solve. Do not run it concurrently with
+Snakemake or another conda operation. If channel downloads fail, follow the
+network checks in `docs/troubleshooting.md`; do not continue with workflow
+validation in the stale environment.
 
 Windows/PowerShell equivalent:
 ```powershell
@@ -40,6 +61,109 @@ Run a specific target:
 ```powershell
 python -m snakemake -s workflows/Snakefile -c 1 age_prediction --configfile config/config.real.yml
 ```
+
+Regenerate only the replicate-corrected donor-level analyses from the existing
+annotated checkpoint:
+```powershell
+python -m snakemake -s workflows/Snakefile.replicate_corrected -c 1 --configfile config/config.real.full.replicate_corrected.yml
+```
+
+## Validation
+Use the project conda environment before running workflow checks. The tracked
+environment is CPU-first for portability.
+
+```powershell
+python -m compileall src workflows
+python -m unittest discover -s tests -v
+python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/config.demo.yaml
+```
+
+Development-only linting is kept outside the scientific runtime environment:
+
+```powershell
+$base_python = Join-Path ((conda info --base).Trim()) "python.exe"
+& $base_python -m venv .venv-dev
+$dev_python = Join-Path (Resolve-Path ".venv-dev") "Scripts\python.exe"
+& $dev_python -m pip install -r requirements-dev.txt
+& $dev_python -m ruff check src tests workflows
+& $dev_python -m ruff format --check src tests workflows
+```
+
+Enable GPU training only after installing a CUDA-enabled PyTorch build and
+validating CUDA locally, then set `scvi.accelerator: gpu` in the config profile
+you are running.
+
+## Replicate-Corrected GSE164378 Results
+Review of the source metadata showed that the original `donor_id` field was
+reused across pools. Donor-level analyses were therefore repeated using
+`Tube_id` as `biological_replicate_id`. The source metadata contained 317
+biological replicates, of which 316 met the requirements for the main
+composition and prediction analyses.
+
+After adjustment for sex and batch, a 10-year difference in age was associated
+with a 1.77 percentage-point lower Tcm/Naive cytotoxic T-cell fraction (95% CI
+-1.96 to -1.58; FDR 5.15e-53), a 0.30 percentage-point lower MAIT-cell
+fraction (95% CI -0.38 to -0.23; FDR 2.71e-15), and a 0.76 percentage-point
+higher CD16+ NK-cell fraction (95% CI 0.42 to 1.08; FDR 6.43e-5). These are
+cross-sectional associations between participants, not estimates of
+within-person change or causal effects of aging. Tcm/Naive cytotoxic T cells
+form a combined annotation category rather than a single resolved subtype.
+
+![Selected GSE164378 cell-type composition associations with age](docs/assets/gse164378_corrected_composition_core_trends.png)
+
+*Cell-type fractions per biological replicate plotted against age for the three
+associations selected for the main figure. Lines are unadjusted linear
+summaries included for visualization; Spearman rho and FDR are from analyses
+adjusted for sex and batch. Tcm/Naive cytotoxic T cells form a combined
+annotation category. The associations are cross-sectional and do not establish
+causality.*
+
+The retained composition results are summarized below on a common
+percentage-point scale. The two filled markers identify the core results shown
+above; open markers indicate secondary retained associations.
+
+![Retained GSE164378 cell-type composition effect estimates](docs/assets/gse164378_corrected_composition_effect_forest.png)
+
+*Sex- and batch-adjusted differences in cell-type fraction per 10-year
+difference in age for all retained composition associations. Points show
+effect estimates in percentage points, and bars show 95% bootstrap confidence
+intervals.*
+
+The scVI-derived features also retained an age-related predictive signal. In
+nested regressor cross-validation grouped by biological replicate, the selected model
+had a donor-level mean absolute error of 12.39 years (95% CI 11.63 to 13.15),
+compared with 15.13 years for a fold-specific mean-age baseline. This is modest
+internal, transductive predictive performance: the `X_scVI` representation was
+learned once from the full cohort before the grouped regressor evaluation. It
+has not been validated end to end in unseen donors, as an aging clock, or as a
+clinical biomarker.
+
+![Internal cross-validated age prediction in GSE164378](docs/assets/gse164378_corrected_age_prediction_internal_cv.png)
+
+*Observed donor age and cross-validated predicted age for the selected model.
+Outer regressor folds were grouped by biological replicate; the upstream scVI
+representation was fitted once on the full cohort. The identity line represents
+perfect prediction, while the fitted line shows the relationship observed in
+the held-out predictions. Reported metrics describe internal cross-validation
+of the regressor and do not establish end-to-end generalization, external
+validity, or clinical utility.*
+
+Several predefined gene-set scores were associated with age, but these results
+remain exploratory. Signature scores are proxies for the configured gene sets
+and do not directly measure pathway activation or suppression.
+
+The donor-aware, cell-type-specific pseudobulk differential-expression module
+is implemented as a targeted corrected-profile stage. Its approved contract
+uses summed raw counts, continuous age, replicate-level inference, and a
+version-checked `edgeR` quasi-likelihood model. The container runtime has
+passed a bounded synthetic qualification test. The full corrected-replicate
+GSE164378 run and automated technical validation are complete, but the
+gene-level results have not yet undergone biological interpretation. A
+pre-specified robustness audit completed 212 sensitivity models, recorded
+three non-estimable scenarios explicitly, and produced a bounded 249-row queue
+for later human review. It did not approve genes or pathways, and no gene-level
+claims are currently presented. See `docs/pseudobulk_de.md`,
+`docs/pseudobulk_de_design.md`, and `docs/pseudobulk_robustness_audit.md`.
 
 ## Report Outputs
 Generated by `src/report.py`:
@@ -70,8 +194,17 @@ Generated by `src/age_prediction.py`:
 - `results/tables/age_pred_cv_predictions.csv`
 - `results/tables/age_pred_metrics.csv`
 - `results/tables/age_pred_model_comparison_summary.csv`
-  - `age_pred_metrics.csv` compares candidate models under identical donor-grouped CV folds (clean benchmark).
+  - `age_pred_metrics.csv` compares candidate models under identical
+    donor-grouped cross-validation folds.
   - `age_pred_model_comparison_summary.csv` adds fold-level winner counts and bootstrap CI for paired MAE deltas vs best Ridge.
+
+Generated by `src/sensitivity_age.py`:
+- `results/sensitivity_age/sensitivity_manifest.csv`
+- `results/sensitivity_age/sensitivity_summary.csv`
+
+Generated by `src/supplementary_age_plots.py`:
+- `results/figures/supp_age_effect_ci_forest.png`
+- `results/figures/supp_age_sensitivity_stability.png`
 
 ## Real-Data Mode
 Use `config/config.real.yml` and set:
@@ -81,7 +214,10 @@ Use `config/config.real.yml` and set:
 Detailed schema + ingestion notes: `docs/real_data.md`.
 
 ## Notes
-- Default config uses CPU for portability on Windows/macOS/Linux.
+- Default configs use CPU for portability on Windows/macOS/Linux and match the
+  CPU-only PyTorch environment in `environment.yml`.
 - Large data files and `results/` are gitignored.
-- For README showcase images, commit selected files under `docs/assets/` (`.png/.jpg/.jpeg/.webp`).
+- `config/config.real.yml` is the pilot subset profile; `config/config.real.full.yml` is the scaled/full profile.
+- Store figures referenced by the README under `docs/assets/`
+  (`.png/.jpg/.jpeg/.webp`).
 - Keep `.snakemake/`, raw downloads, and generated artifacts out of version control.

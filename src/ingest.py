@@ -42,8 +42,15 @@ def main():
                 raise ValueError("run.max_cells must be > 0 when provided")
 
             seed = int(cfg.get("run", {}).get("seed", 0))
+            drop_raw_on_subset = bool(cfg.get("run", {}).get("drop_raw_on_subset", True))
             adata_backed = ad.read_h5ad(str(in_path), backed="r")
             try:
+                # Backed `.to_memory()` also materializes `.raw` when present.
+                # For large files this can dominate RAM and trigger OOM during
+                # subsampling; keep it optional but enabled by default.
+                if drop_raw_on_subset and adata_backed.raw is not None:
+                    adata_backed.raw = None
+
                 n_obs = int(adata_backed.n_obs)
 
                 if n_obs > max_cells:

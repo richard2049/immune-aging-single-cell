@@ -1,22 +1,42 @@
 OUT = config["project"]["out_dir"]
 CFG = config["cfg_path"]
+SENS_AGE_ENABLED = bool(config.get("sensitivity_age", {}).get("enabled", False))
+SENS_AGE_MANIFEST = f"{OUT}/sensitivity_age/sensitivity_manifest.csv"
+SENS_AGE_OUTPUTS = (
+    [
+        SENS_AGE_MANIFEST,
+        f"{OUT}/sensitivity_age/sensitivity_summary.csv",
+        f"{OUT}/sensitivity_age/done.txt",
+    ]
+    if SENS_AGE_ENABLED
+    else []
+)
+SUPP_SENS_INPUT = [SENS_AGE_MANIFEST] if SENS_AGE_ENABLED else []
+SUPP_AGE_OUTPUTS = [
+    f"{OUT}/figures/supp_age_effect_ci_forest.png",
+    f"{OUT}/figures/supp_age_sensitivity_stability.png",
+]
 
 rule all:
     input:
-        f"{OUT}/reports.done",
-        f"{OUT}/figures/age_celltype_composition_by_bin.png",
-        f"{OUT}/figures/age_celltype_top_trends.png",
-        f"{OUT}/tables/age_celltype_fraction_by_donor.csv",
-        f"{OUT}/tables/age_celltype_trend_stats.csv",
-        f"{OUT}/figures/signature_age_heatmap.png",
-        f"{OUT}/figures/signature_age_top_associations.png",
-        f"{OUT}/tables/signature_scores_by_donor_celltype.csv",
-        f"{OUT}/tables/signature_age_associations.csv",
-        f"{OUT}/figures/age_pred_observed_vs_predicted.png",
-        f"{OUT}/figures/age_pred_mae_by_celltype.png",
-        f"{OUT}/tables/age_pred_cv_predictions.csv",
-        f"{OUT}/tables/age_pred_metrics.csv",
-        f"{OUT}/tables/age_pred_model_comparison_summary.csv"
+        [
+            f"{OUT}/reports.done",
+            f"{OUT}/figures/age_celltype_composition_by_bin.png",
+            f"{OUT}/figures/age_celltype_top_trends.png",
+            f"{OUT}/tables/age_celltype_fraction_by_donor.csv",
+            f"{OUT}/tables/age_celltype_trend_stats.csv",
+            f"{OUT}/figures/signature_age_heatmap.png",
+            f"{OUT}/figures/signature_age_top_associations.png",
+            f"{OUT}/tables/signature_scores_by_donor_celltype.csv",
+            f"{OUT}/tables/signature_age_associations.csv",
+            f"{OUT}/figures/age_pred_observed_vs_predicted.png",
+            f"{OUT}/figures/age_pred_mae_by_celltype.png",
+            f"{OUT}/tables/age_pred_cv_predictions.csv",
+            f"{OUT}/tables/age_pred_metrics.csv",
+            f"{OUT}/tables/age_pred_model_comparison_summary.csv",
+        ]
+        + SUPP_AGE_OUTPUTS
+        + SENS_AGE_OUTPUTS
 
 rule ingest:
     output:
@@ -140,4 +160,38 @@ rule age_prediction:
             "--fig-pred {output.fig_pred} --fig-mae {output.fig_mae} "
             "--table-pred {output.table_pred} --table-metrics {output.table_metrics} "
             "--table-summary {output.table_summary}"
+        )
+
+
+rule sensitivity_age:
+    input:
+        f"{OUT}/06_annotated.h5ad"
+    output:
+        manifest=f"{OUT}/sensitivity_age/sensitivity_manifest.csv",
+        summary=f"{OUT}/sensitivity_age/sensitivity_summary.csv",
+        done=f"{OUT}/sensitivity_age/done.txt"
+    shell:
+        (
+            "python -m src.sensitivity_age --config {CFG} --inp {input} "
+            "--outdir {OUT}/sensitivity_age --manifest {output.manifest} "
+            "--summary {output.summary} --done {output.done}"
+        )
+
+
+rule supplementary_age:
+    input:
+        table_composition=f"{OUT}/tables/age_celltype_trend_stats.csv",
+        table_signature=f"{OUT}/tables/signature_age_associations.csv",
+        sens=SUPP_SENS_INPUT
+    output:
+        fig_effect_ci=f"{OUT}/figures/supp_age_effect_ci_forest.png",
+        fig_stability=f"{OUT}/figures/supp_age_sensitivity_stability.png"
+    shell:
+        (
+            "python -m src.supplementary_age_plots --config {CFG} "
+            "--table-composition {input.table_composition} "
+            "--table-signature {input.table_signature} "
+            "--sensitivity-manifest " + SENS_AGE_MANIFEST + " "
+            "--fig-effect-ci {output.fig_effect_ci} "
+            "--fig-stability {output.fig_stability}"
         )

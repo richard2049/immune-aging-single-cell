@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import scanpy as sc
 import scipy.sparse as sp
 from scipy import stats
 
+from .biological_replicates import attach_biological_replicates
 from .plot_style import DIVERGING_CMAP, PALETTE, apply_publication_style, finalize_and_save, save_placeholder, style_axis
 from .utils import ensure_dir, load_config
 
@@ -72,9 +73,24 @@ DEFAULT_SIGNATURES = {
     ],
 }
 
+SIGNATURE_LABEL_OVERRIDES = {
+    "ifn_response": "IFN response",
+    "inflammatory_nfkb": "Inflammatory (NF-kB)",
+    "mitochondrial_stress": "Mitochondrial stress",
+    "proteostasis_upr": "Proteostasis (UPR)",
+    "sasp_proxy": "SASP proxy",
+}
+
 
 def _save_placeholder(path: Path, title: str, message: str, dpi: int) -> None:
     save_placeholder(path=path, title=title, message=message, dpi=dpi)
+
+
+def _format_signature_label(name: str) -> str:
+    label = SIGNATURE_LABEL_OVERRIDES.get(name)
+    if label:
+        return label
+    return name.replace("_", " ").strip().title()
 
 
 def _first_existing(columns: list[str], candidates: list[str]) -> str | None:
@@ -83,6 +99,142 @@ def _first_existing(columns: list[str], candidates: list[str]) -> str | None:
         if key in cols:
             return key
     return None
+
+
+def _weighted_capped_allocation(weights: np.ndarray, caps: np.ndarray, total: int) -> np.ndarray:
+    caps = np.asarray(caps, dtype=int)
+    out = np.zeros_like(caps, dtype=int)
+    if caps.size == 0:
+        return out
+
+    total = int(max(total, 0))
+    if total == 0:
+        return out
+    budget = min(total, int(caps.sum()))
+    if budget <= 0:
+        return out
+
+    w = np.asarray(weights, dtype=float)
+    w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
+    if float(w.sum()) <= 0:
+        w = caps.astype(float)
+    if float(w.sum()) <= 0:
+        w = (caps > 0).astype(float)
+
+    quota = (w / float(w.sum())) * float(budget)
+    add = np.floor(quota).astype(int)
+    add = np.minimum(add, caps)
+    out += add
+    remaining = budget - int(out.sum())
+    if remaining <= 0:
+        return out
+
+    frac = quota - np.floor(quota)
+    order = np.argsort(-frac)
+    for idx in order:
+        if remaining <= 0:
+            break
+        if out[idx] >= caps[idx]:
+            continue
+        out[idx] += 1
+        remaining -= 1
+
+    if remaining <= 0:
+        return out
+
+    cap_left = caps - out
+    order = np.argsort(-cap_left)
+    for idx in order:
+        if remaining <= 0:
+            break
+        if cap_left[idx] <= 0:
+            continue
+        take = min(int(cap_left[idx]), remaining)
+        out[idx] += take
+        remaining -= take
+    return out
+
+
+def _allocate_group_samples(group_sizes: pd.Series, max_cells: int, min_cells_per_group: int) -> pd.Series:
+    alloc = pd.Series(0, index=group_sizes.index, dtype=int)
+    if group_sizes.empty or max_cells <= 0:
+        return alloc
+
+    min_cells_per_group = max(int(min_cells_per_group), 1)
+    large_mask = group_sizes >= min_cells_per_group
+    mandatory = pd.Series(0, index=group_sizes.index, dtype=int)
+    mandatory.loc[large_mask] = min_cells_per_group
+    mandatory_total = int(mandatory.sum())
+
+    if mandatory_total >= max_cells:
+        weights = group_sizes.where(large_mask, 0).to_numpy(dtype=float)
+        caps = group_sizes.where(large_mask, 0).to_numpy(dtype=int)
+        alloc_vals = _weighted_capped_allocation(weights=weights, caps=caps, total=max_cells)
+        return pd.Series(alloc_vals, index=group_sizes.index, dtype=int)
+
+    alloc += mandatory
+    remaining_budget = max_cells - int(alloc.sum())
+    if remaining_budget <= 0:
+        return alloc
+
+    caps_left = (group_sizes - alloc).clip(lower=0).to_numpy(dtype=int)
+    weights = caps_left.astype(float)
+    extra = _weighted_capped_allocation(weights=weights, caps=caps_left, total=remaining_budget)
+    alloc += pd.Series(extra, index=group_sizes.index, dtype=int)
+    return alloc
+
+
+def _stratified_sample_indices(
+    valid_idx: np.ndarray,
+    donor_values: np.ndarray,
+    celltype_values: np.ndarray,
+    max_cells: int,
+    min_cells_per_group: int,
+    seed: int,
+) -> np.ndarray:
+    if len(valid_idx) <= max_cells:
+        out = np.asarray(valid_idx, dtype=int)
+        out.sort()
+        return out
+
+    df = pd.DataFrame(
+        {
+            "obs_idx": np.asarray(valid_idx, dtype=int),
+            "donor_id": np.asarray(donor_values, dtype=str),
+            "cell_type": np.asarray(celltype_values, dtype=str),
+        }
+    )
+    group_sizes = df.groupby(["donor_id", "cell_type"], observed=False).size()
+    alloc = _allocate_group_samples(
+        group_sizes=group_sizes,
+        max_cells=int(max_cells),
+        min_cells_per_group=int(min_cells_per_group),
+    )
+
+    rng = np.random.default_rng(seed)
+    chosen: list[np.ndarray] = []
+    grouped = df.groupby(["donor_id", "cell_type"], observed=False)["obs_idx"]
+    for key, obs_idx_series in grouped:
+        take = int(alloc.loc[key]) if key in alloc.index else 0
+        if take <= 0:
+            continue
+        arr = obs_idx_series.to_numpy(dtype=int)
+        if take >= arr.size:
+            chosen.append(arr)
+        else:
+            chosen.append(rng.choice(arr, size=take, replace=False))
+
+    if not chosen:
+        fallback = np.asarray(valid_idx, dtype=int)
+        fallback = rng.choice(fallback, size=max_cells, replace=False)
+        fallback.sort()
+        return fallback
+
+    out = np.concatenate(chosen).astype(int, copy=False)
+    if out.size > max_cells:
+        out = rng.choice(out, size=max_cells, replace=False)
+    out.sort()
+    return out
 
 
 def _bh_fdr(pvals: np.ndarray) -> np.ndarray:
@@ -103,6 +255,57 @@ def _bh_fdr(pvals: np.ndarray) -> np.ndarray:
     restored = np.empty_like(q)
     restored[order] = q
     out[valid] = restored
+    return out
+
+
+def _bootstrap_rho_slope_ci(
+    x: np.ndarray,
+    y: np.ndarray,
+    n_boot: int,
+    ci: float,
+    seed: int,
+) -> dict[str, float]:
+    out = {
+        "spearman_rho_ci_low": np.nan,
+        "spearman_rho_ci_high": np.nan,
+        "slope_per_year_ci_low": np.nan,
+        "slope_per_year_ci_high": np.nan,
+    }
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+    n = x.size
+    if n < 4 or int(n_boot) <= 1:
+        return out
+
+    rng = np.random.default_rng(int(seed))
+    rho_vals: list[float] = []
+    slope_vals: list[float] = []
+    for _ in range(int(n_boot)):
+        idx = rng.integers(0, n, size=n)
+        xb = x[idx]
+        yb = y[idx]
+        if np.unique(xb).size < 3 or np.unique(yb).size < 3:
+            continue
+        try:
+            rho, _ = stats.spearmanr(xb, yb)
+            slope = stats.linregress(xb, yb).slope
+        except Exception:
+            continue
+        if np.isfinite(rho):
+            rho_vals.append(float(rho))
+        if np.isfinite(slope):
+            slope_vals.append(float(slope))
+
+    alpha = (1.0 - float(ci)) / 2.0
+    if len(rho_vals) > 2:
+        out["spearman_rho_ci_low"] = float(np.quantile(rho_vals, alpha))
+        out["spearman_rho_ci_high"] = float(np.quantile(rho_vals, 1.0 - alpha))
+    if len(slope_vals) > 2:
+        out["slope_per_year_ci_low"] = float(np.quantile(slope_vals, alpha))
+        out["slope_per_year_ci_high"] = float(np.quantile(slope_vals, 1.0 - alpha))
     return out
 
 
@@ -142,7 +345,16 @@ def _pick_columns(obs_cols: list[str], cfg: dict) -> dict[str, str | None]:
     return {"age": age, "donor": donor, "cell_type": celltype, "sex": sex}
 
 
-def _subset_cells(adata, age_col: str, donor_col: str, celltype_col: str, max_cells: int, seed: int) -> np.ndarray:
+def _subset_cells(
+    adata,
+    age_col: str,
+    donor_col: str,
+    celltype_col: str,
+    max_cells: int,
+    min_cells_per_group: int,
+    seed: int,
+    sampling_strategy: str = "stratified",
+) -> np.ndarray:
     obs = adata.obs
     keep = (
         pd.to_numeric(obs[age_col], errors="coerce").notna()
@@ -153,10 +365,201 @@ def _subset_cells(adata, age_col: str, donor_col: str, celltype_col: str, max_ce
     if len(idx) <= max_cells:
         return idx
 
-    rng = np.random.default_rng(seed)
-    chosen = rng.choice(idx, size=max_cells, replace=False)
-    chosen.sort()
-    return chosen
+    sampling_strategy = str(sampling_strategy).lower()
+    if sampling_strategy == "random":
+        rng = np.random.default_rng(seed)
+        chosen = rng.choice(idx, size=max_cells, replace=False)
+        chosen.sort()
+        return chosen
+
+    donor_values = obs.iloc[idx][donor_col].astype(str).to_numpy()
+    celltype_values = obs.iloc[idx][celltype_col].astype(str).to_numpy()
+    return _stratified_sample_indices(
+        valid_idx=idx,
+        donor_values=donor_values,
+        celltype_values=celltype_values,
+        max_cells=max_cells,
+        min_cells_per_group=min_cells_per_group,
+        seed=seed,
+    )
+
+
+def _materialize_signature_genes(
+    adata_backed,
+    selected_indices: np.ndarray,
+    signatures: dict[str, list[str]],
+    assume_log1p: bool,
+    target_sum: float,
+    chunk_size: int,
+) -> ad.AnnData:
+    present_genes = sorted(
+        {
+            gene
+            for genes in signatures.values()
+            for gene in genes
+            if gene in adata_backed.var_names
+        }
+    )
+    if not present_genes:
+        return ad.AnnData(
+            X=sp.csr_matrix((len(selected_indices), 0), dtype=np.float32),
+            obs=adata_backed.obs.iloc[selected_indices].copy(),
+            var=pd.DataFrame(index=pd.Index([], dtype=str)),
+        )
+
+    gene_indices = adata_backed.var_names.get_indexer(present_genes)
+    matrix_parts: list[sp.csr_matrix] = []
+    obs_parts: list[pd.DataFrame] = []
+    chunk_size = max(int(chunk_size), 1)
+    for start in range(0, len(selected_indices), chunk_size):
+        end = min(start + chunk_size, len(selected_indices))
+        row_indices = selected_indices[start:end]
+        chunk = adata_backed[row_indices].to_memory()
+        obs_parts.append(chunk.obs.copy())
+
+        full_matrix = chunk.X
+        signature_matrix = full_matrix[:, gene_indices]
+        if sp.issparse(signature_matrix):
+            signature_matrix = signature_matrix.tocsr().astype(
+                np.float32,
+                copy=True,
+            )
+        else:
+            signature_matrix = sp.csr_matrix(
+                np.asarray(signature_matrix, dtype=np.float32)
+            )
+
+        if not assume_log1p:
+            totals = np.asarray(full_matrix.sum(axis=1)).ravel()
+            scales = np.divide(
+                float(target_sum),
+                totals,
+                out=np.zeros_like(totals, dtype=np.float64),
+                where=totals > 0,
+            )
+            signature_matrix = sp.diags(scales).dot(
+                signature_matrix
+            ).tocsr()
+            signature_matrix.data = np.log1p(signature_matrix.data)
+        matrix_parts.append(signature_matrix)
+        print(
+            "[signature_age] "
+            f"materialized {end:,}/{len(selected_indices):,} selected cells",
+            flush=True,
+        )
+
+    matrix = sp.vstack(matrix_parts, format="csr")
+    obs = pd.concat(obs_parts, axis=0)
+    var = adata_backed.var.iloc[gene_indices].copy()
+    return ad.AnnData(X=matrix, obs=obs, var=var)
+
+
+def _mode_or_na(values: pd.Series) -> str:
+    mode = values.mode(dropna=True)
+    if mode.empty:
+        return "NA"
+    return str(mode.iloc[0])
+
+
+def _resolve_covariate_cols(obs_cols: list[str], cfg: dict, colmap: dict[str, str | None]) -> list[str]:
+    scfg = cfg.get("signature_age", {})
+    requested = scfg.get("covariate_cols")
+    if isinstance(requested, list):
+        candidates = [str(c) for c in requested]
+    else:
+        candidates = []
+        if colmap.get("sex") is not None:
+            candidates.append(str(colmap["sex"]))
+
+    cols = set(obs_cols)
+    out: list[str] = []
+    for c in candidates:
+        if c in cols and c not in out:
+            out.append(c)
+    return out
+
+
+def _build_covariate_design(df: pd.DataFrame) -> np.ndarray | None:
+    if df.empty:
+        return None
+
+    mats: list[np.ndarray] = []
+    for col in df.columns:
+        s = df[col]
+        num = pd.to_numeric(s, errors="coerce")
+        numeric_ratio = float(num.notna().mean())
+        if numeric_ratio > 0.95:
+            fill = float(num.median(skipna=True)) if num.notna().any() else 0.0
+            mats.append(num.fillna(fill).to_numpy(dtype=float).reshape(-1, 1))
+            continue
+
+        cat = s.astype(str).fillna("NA")
+        dummies = pd.get_dummies(cat, prefix=str(col), drop_first=True)
+        if dummies.shape[1] > 0:
+            mats.append(dummies.to_numpy(dtype=float))
+
+    if not mats:
+        return None
+    x = np.concatenate(mats, axis=1)
+    intercept = np.ones((x.shape[0], 1), dtype=float)
+    return np.concatenate([intercept, x], axis=1)
+
+
+def _residualize_vector(y: np.ndarray, x: np.ndarray | None) -> np.ndarray:
+    y = np.asarray(y, dtype=float)
+    if x is None or x.shape[0] != y.shape[0] or x.shape[1] == 0:
+        return y - float(np.mean(y))
+    beta, *_ = np.linalg.lstsq(x, y, rcond=None)
+    res = y - x @ beta
+    if not np.isfinite(res).all() or float(np.std(res)) == 0.0:
+        return y - float(np.mean(y))
+    return res
+
+
+def _prepare_xy_for_stats(
+    g: pd.DataFrame,
+    score_col: str,
+    covariate_cols: list[str],
+    adjust_covariates: bool,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    x = g["age"].to_numpy(dtype=float)
+    y = g[score_col].to_numpy(dtype=float)
+    if not adjust_covariates or not covariate_cols:
+        return x, y, False
+
+    design = _build_covariate_design(g[covariate_cols].copy())
+    if design is None:
+        return x, y, False
+
+    x_res = _residualize_vector(x, design)
+    y_res = _residualize_vector(y, design)
+    return x_res, y_res, True
+
+
+def _deduplicate_donors(df: pd.DataFrame, score_col: str, covariate_cols: list[str]) -> pd.DataFrame:
+    cols = ["donor_id", "age", score_col] + [c for c in covariate_cols if c in df.columns]
+    out = df[cols].dropna(subset=["donor_id", "age", score_col]).copy()
+    if out.empty:
+        return out
+    out = out.sort_values(["donor_id", "age"]).drop_duplicates(subset=["donor_id"], keep="last")
+    return out
+
+
+def _filter_assoc_for_panels(
+    assoc: pd.DataFrame,
+    significant_only: bool,
+    min_donors_for_panel: int,
+) -> pd.DataFrame:
+    out = assoc.copy()
+    if significant_only:
+        out = out[out["fdr_significant"]].copy()
+    if min_donors_for_panel > 0:
+        out = out[out["n_donors"] >= int(min_donors_for_panel)].copy()
+    return out
+
+
+def _sort_assoc_for_panels(assoc: pd.DataFrame) -> pd.DataFrame:
+    return assoc.sort_values(["fdr", "pvalue", "spearman_rho"], ascending=[True, True, False])
 
 
 def _mean_expression_per_signature(adata, signatures: dict[str, list[str]], min_genes_present: int) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -195,14 +598,59 @@ def _mean_expression_per_signature(adata, signatures: dict[str, list[str]], min_
     return score_df, sig_meta
 
 
-def _aggregate_scores(obs: pd.DataFrame, score_cols: list[str], min_cells_per_group: int) -> pd.DataFrame:
+def _aggregate_scores(
+    obs: pd.DataFrame,
+    score_cols: list[str],
+    min_cells_per_group: int,
+    covariate_cols: list[str],
+) -> pd.DataFrame:
+    agg_map: dict[str, tuple[str, str | callable]] = {
+        "age": ("age", "median"),
+        "n_cells": ("cell_type", "size"),
+    }
+    for c in covariate_cols:
+        if c in obs.columns:
+            agg_map[c] = (c, _mode_or_na)
+    for c in score_cols:
+        agg_map[c] = (c, "mean")
+
     grouped = (
-        obs.groupby(["donor_id", "age", "sex", "cell_type"], observed=False)
-        .agg(n_cells=("cell_type", "size"), **{c: (c, "mean") for c in score_cols})
+        obs.groupby(["donor_id", "cell_type"], observed=False)
+        .agg(**agg_map)
         .reset_index()
     )
     grouped = grouped[grouped["n_cells"] >= min_cells_per_group].copy()
     return grouped
+
+
+def _empty_association_table() -> pd.DataFrame:
+    cols = [
+        "cell_type",
+        "signature",
+        "n_donors",
+        "age_min",
+        "age_max",
+        "age_span",
+        "spearman_rho",
+        "pvalue",
+        "spearman_rho_ci_low",
+        "spearman_rho_ci_high",
+        "slope_per_year",
+        "slope_per_year_ci_low",
+        "slope_per_year_ci_high",
+        "effect_per_10y",
+        "effect_per_10y_ci_low",
+        "effect_per_10y_ci_high",
+        "slope_pvalue",
+        "r_squared",
+        "adjusted",
+        "adjusted_for",
+        "fdr",
+        "direction",
+        "fdr_significant",
+        "rank",
+    ]
+    return pd.DataFrame(columns=cols)
 
 
 def _association_table(
@@ -210,55 +658,75 @@ def _association_table(
     score_cols: list[str],
     min_donors_per_celltype: int,
     min_age_span: float,
+    covariate_cols: list[str],
+    adjust_covariates: bool,
+    bootstrap_iterations: int,
+    bootstrap_ci: float,
+    seed: int,
 ) -> pd.DataFrame:
     rows = []
+    adjusted_for = ",".join(covariate_cols) if (adjust_covariates and covariate_cols) else ""
+    pair_idx = 0
     for cell_type, gct in agg.groupby("cell_type", observed=False):
         for sc_col in score_cols:
-            t = gct[["age", sc_col]].dropna().copy()
-            if t.shape[0] < min_donors_per_celltype:
+            t = _deduplicate_donors(gct, sc_col, covariate_cols=covariate_cols)
+            n_donors = int(t["donor_id"].nunique())
+            if n_donors < min_donors_per_celltype:
                 continue
+
             age_span = float(t["age"].max() - t["age"].min())
             if age_span < min_age_span:
                 continue
-            rho, pval = stats.spearmanr(t["age"].to_numpy(), t[sc_col].to_numpy())
-            lr = stats.linregress(t["age"].to_numpy(), t[sc_col].to_numpy())
+
+            x, y, used_adjustment = _prepare_xy_for_stats(
+                t,
+                score_col=sc_col,
+                covariate_cols=covariate_cols,
+                adjust_covariates=adjust_covariates,
+            )
+            rho, pval = stats.spearmanr(x, y)
+            lr = stats.linregress(x, y)
+            if not np.isfinite(rho) or not np.isfinite(pval):
+                continue
+            ci_stats = _bootstrap_rho_slope_ci(
+                x=x,
+                y=y,
+                n_boot=bootstrap_iterations,
+                ci=bootstrap_ci,
+                seed=seed + (pair_idx * 97),
+            )
+            pair_idx += 1
             rows.append(
                 {
                     "cell_type": cell_type,
                     "signature": sc_col.replace("score__", ""),
-                    "n_donors": int(t.shape[0]),
+                    "n_donors": n_donors,
                     "age_min": float(t["age"].min()),
                     "age_max": float(t["age"].max()),
                     "age_span": age_span,
                     "spearman_rho": float(rho),
                     "pvalue": float(pval),
+                    "spearman_rho_ci_low": ci_stats["spearman_rho_ci_low"],
+                    "spearman_rho_ci_high": ci_stats["spearman_rho_ci_high"],
                     "slope_per_year": float(lr.slope),
+                    "slope_per_year_ci_low": ci_stats["slope_per_year_ci_low"],
+                    "slope_per_year_ci_high": ci_stats["slope_per_year_ci_high"],
                     "effect_per_10y": float(lr.slope * 10.0),
+                    "effect_per_10y_ci_low": float(ci_stats["slope_per_year_ci_low"] * 10.0)
+                    if np.isfinite(ci_stats["slope_per_year_ci_low"])
+                    else np.nan,
+                    "effect_per_10y_ci_high": float(ci_stats["slope_per_year_ci_high"] * 10.0)
+                    if np.isfinite(ci_stats["slope_per_year_ci_high"])
+                    else np.nan,
                     "slope_pvalue": float(lr.pvalue),
                     "r_squared": float(lr.rvalue**2),
+                    "adjusted": bool(used_adjustment),
+                    "adjusted_for": adjusted_for if used_adjustment else "",
                 }
             )
 
     if not rows:
-        cols = [
-            "cell_type",
-            "signature",
-            "n_donors",
-            "age_min",
-            "age_max",
-            "age_span",
-            "spearman_rho",
-            "pvalue",
-            "slope_per_year",
-            "effect_per_10y",
-            "slope_pvalue",
-            "r_squared",
-            "fdr",
-            "direction",
-            "fdr_significant",
-            "rank",
-        ]
-        return pd.DataFrame(columns=cols)
+        return _empty_association_table()
 
     out = pd.DataFrame(rows)
     out["fdr"] = _bh_fdr(out["pvalue"].to_numpy())
@@ -300,10 +768,10 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     im = ax.imshow(pivot_rho.to_numpy(), aspect="auto", cmap=DIVERGING_CMAP, vmin=-1, vmax=1)
     ax.set_xticks(np.arange(len(pivot_rho.columns)))
-    ax.set_xticklabels(pivot_rho.columns, rotation=30, ha="right")
+    ax.set_xticklabels([_format_signature_label(c) for c in pivot_rho.columns], rotation=30, ha="right")
     ax.set_yticks(np.arange(len(pivot_rho.index)))
     ax.set_yticklabels(pivot_rho.index)
-    ax.set_title("Signature-age associations (Spearman rho)\n'*' marks FDR < 0.05")
+    ax.set_title("Signature-age associations by immune cell population", pad=12)
 
     for i in range(pivot_rho.shape[0]):
         for j in range(pivot_rho.shape[1]):
@@ -313,15 +781,58 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
 
     cbar = fig.colorbar(im, ax=ax, shrink=0.8)
     cbar.set_label("Spearman rho")
-    finalize_and_save(fig, path, dpi)
+    fig.tight_layout()
+    fdr_note = cbar.ax.text(
+        1.15,
+        -0.28,
+        "* FDR < 0.05",
+        transform=cbar.ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8,
+        color="#4A4A4A",
+        clip_on=False,
+    )
+    fig.savefig(
+        path,
+        dpi=dpi,
+        bbox_inches="tight",
+        bbox_extra_artists=(fdr_note,),
+        pad_inches=0.2,
+        facecolor="white",
+    )
+    plt.close(fig)
 
 
-def _plot_top_panels(agg: pd.DataFrame, assoc: pd.DataFrame, path: Path, top_n: int, dpi: int) -> None:
+def _plot_top_panels(
+    agg: pd.DataFrame,
+    assoc: pd.DataFrame,
+    path: Path,
+    top_n: int,
+    min_donors_for_panel: int,
+    significant_only: bool,
+    dpi: int,
+) -> None:
     if assoc.empty or agg.empty:
         _save_placeholder(path, "Top Signature-Age Associations", "No associations to display.", dpi)
         return
 
-    ranked = assoc.sort_values(["fdr", "pvalue", "spearman_rho"], ascending=[True, True, False]).head(top_n)
+    candidates = _filter_assoc_for_panels(
+        assoc=assoc,
+        significant_only=significant_only,
+        min_donors_for_panel=min_donors_for_panel,
+    )
+    if candidates.empty:
+        filters = []
+        if significant_only:
+            filters.append("FDR<0.05")
+        if min_donors_for_panel > 0:
+            filters.append(f"n_donors>={min_donors_for_panel}")
+        suffix = f" ({', '.join(filters)})" if filters else ""
+        _save_placeholder(path, "Top Signature-Age Associations", f"No associations satisfy panel filters{suffix}.", dpi)
+        return
+
+    ranked = _sort_assoc_for_panels(candidates).head(top_n)
     n = ranked.shape[0]
     n_cols = 2
     n_rows = int(np.ceil(n / n_cols))
@@ -341,9 +852,14 @@ def _plot_top_panels(agg: pd.DataFrame, assoc: pd.DataFrame, path: Path, top_n: 
             ys = lr.intercept + lr.slope * xs
             line_color = PALETTE["secondary"] if lr.slope >= 0 else PALETTE["danger"]
             ax.plot(xs, ys, linewidth=2, color=line_color)
+        sig_label = _format_signature_label(str(row.signature))
+        adjusted_note = ""
+        if bool(getattr(row, "adjusted", False)):
+            adjusted_for = str(getattr(row, "adjusted_for", "")).strip()
+            adjusted_note = f", adj={adjusted_for}" if adjusted_for else ", adj"
         ax.set_title(
-            f"{row.cell_type} | {row.signature}\n"
-            f"rho={row.spearman_rho:.2f}, FDR={row.fdr:.2e}, effect/10y={row.effect_per_10y:.3f}"
+            f"{row.cell_type} | {sig_label}\n"
+            f"rho={row.spearman_rho:.2f}, FDR={row.fdr:.2e}, effect/10y={row.effect_per_10y:.3f}{adjusted_note}"
         )
         ax.set_xlabel("Age")
         ax.set_ylabel("Mean signature score")
@@ -375,11 +891,20 @@ def main() -> None:
     min_cells_per_group = int(scfg.get("min_cells_per_group", 50))
     min_donors_per_celltype = int(scfg.get("min_donors_per_celltype", 8))
     min_age_span = float(scfg.get("min_age_span", 10.0))
+    min_donors_for_panel = int(scfg.get("min_donors_for_panel", max(20, min_donors_per_celltype)))
     max_cells_for_scoring = int(scfg.get("max_cells_for_scoring", 200000))
     top_n_panels = int(scfg.get("top_n_panels", 8))
+    plot_only_fdr_significant = bool(scfg.get("plot_only_fdr_significant", True))
+    adjust_covariates = bool(scfg.get("adjust_covariates", True))
+    bootstrap_iterations = int(scfg.get("bootstrap_iterations", cfg.get("age_prediction", {}).get("bootstrap_iterations", 2000)))
+    bootstrap_ci = float(scfg.get("bootstrap_ci", cfg.get("age_prediction", {}).get("bootstrap_ci", 0.95)))
+    sampling_strategy = str(scfg.get("sampling_strategy", "stratified")).lower()
     seed = int(cfg.get("run", {}).get("seed", 42))
     assume_log1p = bool(scfg.get("assume_log1p", False))
     target_sum = float(scfg.get("normalize_target_sum", 1e4))
+    materialize_chunk_size = int(scfg.get("materialize_chunk_size", 5000))
+    bootstrap_iterations = max(0, bootstrap_iterations)
+    bootstrap_ci = float(np.clip(bootstrap_ci, 0.5, 0.999))
 
     ensure_dir(Path(args.fig_heatmap).parent)
     ensure_dir(Path(args.fig_top).parent)
@@ -389,15 +914,17 @@ def main() -> None:
         ensure_dir(Path(args.table_signature_meta).parent)
     apply_publication_style(dpi=dpi)
 
-    adata_backed = sc.read_h5ad(args.inp, backed="r")
+    adata_backed = ad.read_h5ad(args.inp, backed="r")
+    attach_biological_replicates(adata_backed, cfg)
     colmap = _pick_columns(list(adata_backed.obs.columns), cfg)
+    covariate_cols = _resolve_covariate_cols(list(adata_backed.obs.columns), cfg, colmap)
     missing = [k for k, v in colmap.items() if k in {"age", "donor", "cell_type"} and v is None]
     if missing:
         if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
             adata_backed.file.close()
         msg = f"Missing required columns: {', '.join(missing)}"
         pd.DataFrame().to_csv(args.table_scores, index=False)
-        pd.DataFrame().to_csv(args.table_assoc, index=False)
+        _empty_association_table().to_csv(args.table_assoc, index=False)
         if args.table_signature_meta:
             pd.DataFrame(columns=["signature", "n_genes_requested", "n_genes_present", "present_genes", "missing_genes"]).to_csv(
                 args.table_signature_meta,
@@ -413,13 +940,19 @@ def main() -> None:
         donor_col=str(colmap["donor"]),
         celltype_col=str(colmap["cell_type"]),
         max_cells=max_cells_for_scoring,
+        min_cells_per_group=min_cells_per_group,
         seed=seed,
+        sampling_strategy=sampling_strategy,
+    )
+    print(
+        f"[signature_age] selected {len(sel_idx):,} cells for scoring",
+        flush=True,
     )
     if len(sel_idx) == 0:
         if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
             adata_backed.file.close()
         pd.DataFrame().to_csv(args.table_scores, index=False)
-        pd.DataFrame().to_csv(args.table_assoc, index=False)
+        _empty_association_table().to_csv(args.table_assoc, index=False)
         if args.table_signature_meta:
             pd.DataFrame(columns=["signature", "n_genes_requested", "n_genes_present", "present_genes", "missing_genes"]).to_csv(
                 args.table_signature_meta,
@@ -429,13 +962,18 @@ def main() -> None:
         _save_placeholder(Path(args.fig_top), "Top Signature-Age Associations", "No eligible cells after filtering.", dpi)
         return
 
-    adata = adata_backed[sel_idx].to_memory()
+    adata = _materialize_signature_genes(
+        adata_backed,
+        selected_indices=sel_idx,
+        signatures=signatures,
+        assume_log1p=assume_log1p,
+        target_sum=target_sum,
+        chunk_size=materialize_chunk_size,
+    )
     if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
         adata_backed.file.close()
-    if not assume_log1p:
-        sc.pp.normalize_total(adata, target_sum=target_sum)
-        sc.pp.log1p(adata)
 
+    print("[signature_age] computing signature scores", flush=True)
     score_df, signature_meta = _mean_expression_per_signature(
         adata,
         signatures=signatures,
@@ -447,30 +985,57 @@ def main() -> None:
     obs["age"] = pd.to_numeric(obs[str(colmap["age"])], errors="coerce")
     obs["donor_id"] = obs[str(colmap["donor"])].astype(str)
     obs["cell_type"] = obs[str(colmap["cell_type"])].astype(str)
-    if colmap["sex"] is not None:
-        obs["sex"] = obs[str(colmap["sex"])].astype(str)
-    else:
-        obs["sex"] = "NA"
+    for cov in covariate_cols:
+        if cov in adata.obs.columns:
+            obs[cov] = adata.obs[cov]
 
-    obs = pd.concat([obs[["donor_id", "age", "sex", "cell_type"]], score_df], axis=1)
+    base_cols = ["donor_id", "age", "cell_type"] + [c for c in covariate_cols if c in obs.columns]
+    obs = pd.concat([obs[base_cols], score_df], axis=1)
     obs = obs.dropna(subset=["age", "donor_id", "cell_type"])
 
-    agg = _aggregate_scores(obs, score_cols=score_cols, min_cells_per_group=min_cells_per_group)
+    agg = _aggregate_scores(
+        obs,
+        score_cols=score_cols,
+        min_cells_per_group=min_cells_per_group,
+        covariate_cols=covariate_cols,
+    )
     assoc = _association_table(
         agg,
         score_cols=score_cols,
         min_donors_per_celltype=min_donors_per_celltype,
         min_age_span=min_age_span,
+        covariate_cols=covariate_cols,
+        adjust_covariates=adjust_covariates,
+        bootstrap_iterations=bootstrap_iterations,
+        bootstrap_ci=bootstrap_ci,
+        seed=seed,
+    )
+    print(
+        "[signature_age] "
+        f"computed {len(assoc):,} association tests from "
+        f"{agg['donor_id'].nunique():,} replicates",
+        flush=True,
     )
 
     agg = agg.sort_values(["cell_type", "donor_id"]).reset_index(drop=True)
-    agg.to_csv(args.table_scores, index=False)
+    grouping_col = str(scfg.get("donor_col", "donor_id"))
+    agg_out = agg.rename(columns={"donor_id": grouping_col})
+    assoc["grouping_id_column"] = grouping_col
+    agg_out.to_csv(args.table_scores, index=False)
     assoc.to_csv(args.table_assoc, index=False)
     if args.table_signature_meta:
         signature_meta.to_csv(args.table_signature_meta, index=False)
 
     _plot_heatmap(assoc, path=Path(args.fig_heatmap), dpi=dpi)
-    _plot_top_panels(agg, assoc, path=Path(args.fig_top), top_n=top_n_panels, dpi=dpi)
+    _plot_top_panels(
+        agg,
+        assoc,
+        path=Path(args.fig_top),
+        top_n=top_n_panels,
+        min_donors_for_panel=min_donors_for_panel,
+        significant_only=plot_only_fdr_significant,
+        dpi=dpi,
+    )
 
 
 if __name__ == "__main__":

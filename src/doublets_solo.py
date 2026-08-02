@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import scanpy as sc
-import scipy.sparse as sp
-import scvi
 
 from .utils import load_config
 
 
 def main() -> None:
+    import scanpy as sc
+    import scipy.sparse as sp
+    import scvi
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--inp", required=True)
@@ -18,6 +19,8 @@ def main() -> None:
     cfg = load_config(args.config)
     dbl = cfg["doublets"]
     scvicfg = cfg["scvi"]
+    seed = int(cfg.get("run", {}).get("seed", 42))
+    scvi.settings.seed = seed
 
     adata = sc.read_h5ad(args.inp)
 
@@ -79,6 +82,12 @@ def main() -> None:
 
     adata.obs["doublet"] = adata.obs_names.isin(doublets.index)
     adata = adata[~adata.obs["doublet"]].copy()
+    adata.uns["solo_provenance"] = {
+        "seed": seed,
+        "difference_threshold": dif_thr,
+        "hvg_flavor": hvg_flavor,
+        "hvg_top": int(dbl.get("hvg_top", 2000)),
+    }
 
     adata.write_h5ad(args.out)
 

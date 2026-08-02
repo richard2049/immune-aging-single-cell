@@ -7,6 +7,7 @@ project:
 run:
   # demo_pbmc3k (small) or custom_h5ad (real data you place in data/raw)
   dataset: demo_pbmc3k
+  seed: 42
 
 paths:
   # used when dataset=custom_h5ad
@@ -14,6 +15,7 @@ paths:
 
 metadata:
   enabled: false
+  require_all_matches: true
   parse_obs_names: false
   table_path: null
   table_sep: ","
@@ -45,7 +47,10 @@ scvi:
   layer: counts
   categorical_covariates: []
   continuous_covariates: ["pct_counts_mt", "total_counts", "pct_counts_ribo"]
-  accelerator: gpu
+  allow_missing_covariates: false
+  # Default matches the portable CPU-only environment.yml.
+  # Use "gpu" only after installing a CUDA-enabled PyTorch build.
+  accelerator: cpu
   devices: 1
 
 clustering:
@@ -54,6 +59,7 @@ clustering:
 
 celltypist:
   model: Immune_All_Low.pkl
+  model_source: https://www.celltypist.org/models
   majority_voting: true
 
 report:
@@ -64,8 +70,12 @@ composition_age:
   age_col: age
   donor_col: donor_id
   celltype_col: cell_type
+  adjust_covariates: true
+  drop_sparse_age_bins: true
   min_cells_per_donor: 50
   min_donors_per_celltype: 4
+  bootstrap_iterations: 1000
+  bootstrap_ci: 0.95
   top_n_celltypes: 8
   top_n_trends: 6
   dpi: 150
@@ -75,6 +85,7 @@ signature_age:
   donor_col: donor_id
   celltype_col: cell_type
   sex_col: sex
+  adjust_covariates: true
   normalize_target_sum: 10000
   assume_log1p: false
   max_cells_for_scoring: 50000
@@ -82,6 +93,8 @@ signature_age:
   min_cells_per_group: 20
   min_donors_per_celltype: 4
   min_age_span: 8
+  bootstrap_iterations: 1000
+  bootstrap_ci: 0.95
   top_n_panels: 6
   dpi: 150
 
@@ -104,3 +117,15 @@ age_prediction:
 analysis:
   # expects obs column "age" for real aging datasets
   age_bins: [25, 35, 45, 55, 65, 75, 85]
+
+sensitivity_age:
+  enabled: false
+  include_baseline: true
+  adjust_covariates_values: [true, false]
+  drop_sparse_age_bins_values: [true, false]
+  min_cells_per_group_values: [80, 120, 160]
+
+supplementary_age:
+  top_n_composition: 8
+  top_n_signature: 8
+  dpi: 150

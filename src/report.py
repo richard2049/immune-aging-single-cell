@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from .plot_style import PALETTE, apply_publication_style, finalize_and_save, save_placeholder, style_axis
+from .plot_style import PALETTE, apply_publication_style, categorical_palette, finalize_and_save, save_placeholder, style_axis
 from .utils import ensure_dir, load_config
 
 
@@ -28,7 +28,25 @@ def _select_label_column(adata, requested: str = "auto") -> str | None:
     return None
 
 
-def _save_umap(adata, color: str, path: Path, dpi: int) -> None:
+def _infer_umap_point_size(n_obs: int, configured_size: float | None) -> float:
+    if configured_size is not None:
+        return float(configured_size)
+    n = max(int(n_obs), 1)
+    return float(np.clip(70000.0 / float(n), 0.15, 6.0))
+
+
+def _save_umap(
+    adata,
+    color: str,
+    path: Path,
+    dpi: int,
+    configured_size: float | None,
+    alpha: float,
+    legend_loc_default: str,
+    title_override: str | None = None,
+    show_cell_count_in_title: bool = True,
+    show_title: bool = True,
+) -> None:
     if "X_umap" not in adata.obsm:
         _save_placeholder(path, f"UMAP colored by {color}", "Missing X_umap embedding.", dpi)
         return
@@ -36,18 +54,46 @@ def _save_umap(adata, color: str, path: Path, dpi: int) -> None:
         _save_placeholder(path, f"UMAP colored by {color}", f"Missing obs column: {color}", dpi)
         return
 
+    series = adata.obs[color]
+    is_categorical = bool(series.dtype.name == "category" or series.dtype == object)
+    palette = None
+    legend_loc = legend_loc_default
+    if is_categorical:
+        labels = pd.Series(series.astype(str)).fillna("NA").unique().tolist()
+        palette = categorical_palette(labels)
+        if color == "leiden" and len(labels) <= 20:
+            legend_loc = "on data"
+        legend_fontsize = 6 if len(labels) > 60 else (7 if len(labels) > 25 else 8)
+    else:
+        legend_fontsize = 8
+    point_size = _infer_umap_point_size(int(adata.n_obs), configured_size)
     sc.pl.umap(
         adata,
         color=color,
+        # Keep Scanpy title disabled and set one explicit title below.
+        title="",
         show=False,
         frameon=False,
-        legend_loc="right margin",
-        size=12,
+        legend_loc=legend_loc,
+        size=point_size,
+        alpha=float(alpha),
+        sort_order=True,
+        na_in_legend=False,
+        legend_fontsize=legend_fontsize,
+        legend_fontoutline=1,
+        palette=palette,
     )
     fig = plt.gcf()
     if fig.axes:
-        fig.axes[0].set_title(f"UMAP colored by {color} (n={adata.n_obs:,} cells)")
-    finalize_and_save(fig, path, dpi)
+        fig.axes[0].set_aspect("equal", adjustable="box")
+        if show_title:
+            title = title_override if title_override else f"UMAP colored by {color}"
+            if show_cell_count_in_title:
+                title += f" (n={adata.n_obs:,} cells)"
+            fig.axes[0].set_title(title, loc="left", pad=8, fontsize=11)
+    # Avoid tight_layout for UMAP: huge categorical legends can collapse the panel.
+    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
 def _save_qc_distributions(adata, path: Path, dpi: int) -> None:
@@ -71,6 +117,7 @@ def _save_qc_distributions(adata, path: Path, dpi: int) -> None:
     n_cols = 2
     n_rows = int(np.ceil(len(qc_cols) / n_cols))
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(10, 4 * n_rows))
+    fig.suptitle("Single-cell QC metrics", fontsize=12, weight="semibold")
     axes = np.array(axes).reshape(-1)
 
     for ax, col in zip(axes, qc_cols):
@@ -84,7 +131,7 @@ def _save_qc_distributions(adata, path: Path, dpi: int) -> None:
             linewidth=1.5,
             label=f"median={median:.2f}",
         )
-        ax.set_title(f"{col} (n={vals.size:,})")
+        ax.set_title(f"n={vals.size:,}")
         ax.set_xlabel(col)
         ax.set_ylabel("Cells")
         if col in {"total_counts", "nCount_RNA"}:
@@ -117,10 +164,7 @@ def _save_celltype_composition(adata, path: Path, top_n: int, dpi: int, label_co
     ax.set_xlabel("Fraction of cells")
     ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
     ax.set_ylabel("Label")
-    title = f"Top {len(plot_df)} labels"
-    if label_col != "cell_type":
-        title += f" (source: {label_col})"
-    ax.set_title(f"{title}\nTotal cells: {adata.n_obs:,}")
+    ax.set_title(f"Cell-type composition\nTotal cells: {adata.n_obs:,}")
     style_axis(ax, grid="x")
     for i, (lbl, val) in enumerate(plot_df.items()):
         ax.text(frac.loc[lbl], i, f"  {int(val):,}", va="center", fontsize=9)
@@ -177,6 +221,10 @@ def main() -> None:
     top_n = int(report_cfg.get("max_celltypes_plot", 20))
     label_requested = str(report_cfg.get("label_obs", "auto"))
     use_backed = bool(report_cfg.get("use_backed", True))
+    umap_point_size_cfg = report_cfg.get("umap_point_size")
+    umap_point_size = None if umap_point_size_cfg in {None, "auto"} else float(umap_point_size_cfg)
+    umap_alpha = float(report_cfg.get("umap_alpha", 0.85))
+    umap_legend_loc = str(report_cfg.get("umap_legend_loc", "right margin"))
 
     fig_dir = Path(args.figdir)
     table_dir = Path(args.tabledir)
@@ -188,8 +236,29 @@ def main() -> None:
     label_col = _select_label_column(adata, requested=label_requested)
     umap_label = label_col if label_col is not None else "cell_type"
 
-    _save_umap(adata, "leiden", fig_dir / "umap_leiden.png", dpi)
-    _save_umap(adata, umap_label, fig_dir / "umap_cell_type.png", dpi)
+    _save_umap(
+        adata,
+        "leiden",
+        fig_dir / "umap_leiden.png",
+        dpi,
+        umap_point_size,
+        umap_alpha,
+        umap_legend_loc,
+        title_override="UMAP colored by leiden",
+        show_cell_count_in_title=True,
+    )
+    _save_umap(
+        adata,
+        umap_label,
+        fig_dir / "umap_cell_type.png",
+        dpi,
+        umap_point_size,
+        umap_alpha,
+        umap_legend_loc,
+        title_override="Annotated immune cell populations",
+        show_cell_count_in_title=False,
+        show_title=True,
+    )
     _save_qc_distributions(adata, fig_dir / "qc_distributions.png", dpi)
     _save_celltype_composition(adata, fig_dir / "cell_type_composition.png", top_n, dpi, label_col=label_col)
 

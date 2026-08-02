@@ -1,0 +1,129 @@
+review_metadata:
+  status: public_promotion_approved
+  reviewer: Repository owner
+  review_date: "2026-07-30"
+  public_scope: conservative_core
+  public_claims_approved: true
+  asset_replacements_approved: true
+
+draft_asset_decisions:
+  draft_generation_approved: true
+  public_replacement_approved: true
+  composition_figure: three_panel_core
+  composition_signals:
+    - "composition::Tcm/Naive cytotoxic T cells"
+    - "composition::CD16+ NK cells"
+    - "composition::MAIT cells"
+  signature_figure: omit_from_curated_assets
+  prediction_figure: clean_internal_cv
+  forest_figure: retained_composition_only
+
+final_approval:
+  status: approved
+  reviewer: Repository owner
+  approval_date: "2026-07-30"
+  readme_wording: approved_with_professional_tone_revision
+  composition_figure_and_caption: approved
+  prediction_figure_and_caption: approved
+  forest_figure_and_caption: approved
+  provisional_asset_action: remove
+  approved_public_signal_ids:
+    - "composition::Tcm/Naive cytotoxic T cells"
+    - "composition::MAIT cells"
+    - "composition::CD16+ NK cells"
+    - "composition::Tem/Effector helper T cells"
+    - "composition::Non-classical monocytes"
+    - "prediction::nested_selected"
+
+decisions:
+  - signal_id: "composition::Tcm/Naive cytotoxic T cells"
+    disposition: retain
+    presentation_tier: core
+    rationale: >-
+      Strong, sensitivity-consistent association with broad replicate and age
+      support; presentation must retain the combined-label caveat.
+
+  - signal_id: "composition::MAIT cells"
+    disposition: retain
+    presentation_tier: secondary
+    rationale: >-
+      Strong, sensitivity-consistent association with broad replicate and age
+      support, but lower median cell support than the core composition signals.
+
+  - signal_id: "composition::CD16+ NK cells"
+    disposition: retain
+    presentation_tier: core
+    rationale: >-
+      Sensitivity-consistent association with broad replicate, age, and cell
+      support.
+
+  - signal_id: "composition::Regulatory T cells"
+    disposition: exploratory
+    presentation_tier: exploratory
+    rationale: >-
+      Statistically stable association with broad replicate support, but the
+      absolute fraction change is small.
+
+  - signal_id: "composition::Tem/Effector helper T cells"
+    disposition: retain
+    presentation_tier: secondary
+    rationale: >-
+      Sensitivity-consistent association with broad replicate, age, and cell
+      support; retain as supporting rather than headline evidence.
+
+  - signal_id: "composition::Non-classical monocytes"
+    disposition: retain
+    presentation_tier: secondary
+    rationale: >-
+      Sensitivity-consistent association with broad replicate and age support;
+      retain as supporting rather than headline evidence.
+
+  - signal_id: "composition::CD8a/a"
+    disposition: exclude
+    presentation_tier: excluded
+    rationale: >-
+      Inadequate cell support for interpretation: 144 cells in total and a
+      median of one cell per contributing replicate.
+
+  - signal_id: "signature::CD16+ NK cells::proteostasis_upr"
+    disposition: exploratory
+    presentation_tier: exploratory
+    rationale: >-
+      Sensitivity-consistent gene-set association, but it is a configured proxy
+      and was newly supported after replicate correction.
+
+  - signal_id: "signature::CD16+ NK cells::inflammatory_nfkb"
+    disposition: exploratory
+    presentation_tier: exploratory
+    rationale: >-
+      Sensitivity-consistent gene-set association whose negative direction
+      requires cautious interpretation and does not establish pathway activity.
+
+  - signal_id: "signature::Classical monocytes::inflammatory_nfkb"
+    disposition: exploratory
+    presentation_tier: exploratory
+    rationale: >-
+      Sensitivity-consistent gene-set association whose negative direction
+      requires cautious interpretation and does not establish pathway activity.
+
+  - signal_id: "signature::Classical monocytes::sasp_proxy"
+    disposition: exploratory
+    presentation_tier: exploratory
+    rationale: >-
+      Sensitivity-consistent proxy-score association whose negative direction
+      should not be interpreted as direct evidence of reduced senescence.
+
+  - signal_id: "signature::Tem/Effector helper T cells::inflammatory_nfkb"
+    disposition: exploratory
+    presentation_tier: exploratory
+    rationale: >-
+      Sensitivity-consistent gene-set association whose negative direction
+      requires cautious interpretation and external validation.
+
+  - signal_id: "prediction::nested_selected"
+    disposition: retain
+    presentation_tier: technical_only
+    rationale: >-
+      Retain only as internal grouped-cross-validation evidence relative to the
+      fold-specific mean-age baseline; it is not a validated aging clock or
+      biomarker.
