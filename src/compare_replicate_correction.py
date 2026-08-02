@@ -28,9 +28,7 @@ def _compare_associations(
     for label, table in [("provisional", old), ("corrected", new)]:
         missing = sorted(required.difference(table.columns))
         if missing:
-            raise KeyError(
-                f"{label} {analysis} table is missing columns: {missing}"
-            )
+            raise KeyError(f"{label} {analysis} table is missing columns: {missing}")
 
     selected = keys + [effect_col, fdr_col]
     old = old[selected].rename(
@@ -53,30 +51,18 @@ def _compare_associations(
     new_sign = np.sign(merged["corrected_effect"])
     both = merged["provisional_effect"].notna() & merged["corrected_effect"].notna()
     merged["comparison_status"] = "stable_direction"
-    merged.loc[merged["provisional_effect"].isna(), "comparison_status"] = (
-        "newly_testable"
-    )
-    merged.loc[merged["corrected_effect"].isna(), "comparison_status"] = (
-        "no_longer_testable"
-    )
-    merged.loc[both & old_sign.ne(new_sign), "comparison_status"] = (
-        "direction_changed"
-    )
+    merged.loc[merged["provisional_effect"].isna(), "comparison_status"] = "newly_testable"
+    merged.loc[merged["corrected_effect"].isna(), "comparison_status"] = "no_longer_testable"
+    merged.loc[both & old_sign.ne(new_sign), "comparison_status"] = "direction_changed"
     merged.loc[
-        both
-        & ~merged["provisional_supported"]
-        & merged["corrected_supported"],
+        both & ~merged["provisional_supported"] & merged["corrected_supported"],
         "comparison_status",
     ] = "newly_supported"
     merged.loc[
-        both
-        & merged["provisional_supported"]
-        & ~merged["corrected_supported"],
+        both & merged["provisional_supported"] & ~merged["corrected_supported"],
         "comparison_status",
     ] = "lost_support"
-    merged["effect_change"] = (
-        merged["corrected_effect"] - merged["provisional_effect"]
-    )
+    merged["effect_change"] = merged["corrected_effect"] - merged["provisional_effect"]
     return merged
 
 
@@ -91,13 +77,9 @@ def _compare_prediction_metrics(
     for label, table in [("provisional", old), ("corrected", new)]:
         missing = sorted(set(keys + metrics).difference(table.columns))
         if missing:
-            raise KeyError(
-                f"{label} age-prediction metrics are missing columns: {missing}"
-            )
+            raise KeyError(f"{label} age-prediction metrics are missing columns: {missing}")
     old = old[keys + metrics].add_prefix("provisional_")
-    old = old.rename(
-        columns={f"provisional_{key}": key for key in keys}
-    )
+    old = old.rename(columns={f"provisional_{key}": key for key in keys})
     new = new[keys + metrics].add_prefix("corrected_")
     new = new.rename(columns={f"corrected_{key}": key for key in keys})
     merged = old.merge(new, on=keys, how="outer", validate="one_to_one")
@@ -107,9 +89,7 @@ def _compare_prediction_metrics(
         "comparable",
         "model_set_changed",
     )
-    merged["mae_change"] = (
-        merged["corrected_mae"] - merged["provisional_mae"]
-    )
+    merged["mae_change"] = merged["corrected_mae"] - merged["provisional_mae"]
     return merged
 
 
@@ -173,9 +153,7 @@ def main() -> None:
         "age_prediction_models_compared": int(
             prediction["comparison_status"].eq("comparable").sum()
         ),
-        "corrected_biological_interpretation_status": (
-            "provisional_pending_human_review"
-        ),
+        "corrected_biological_interpretation_status": ("provisional_pending_human_review"),
     }
     with summary_out.open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)

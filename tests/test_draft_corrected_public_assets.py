@@ -14,10 +14,7 @@ class DraftCorrectedPublicAssetTests(unittest.TestCase):
             "composition::B",
             "composition::C",
         ]
-        decisions = {
-            signal: {"disposition": "retain"}
-            for signal in signals
-        }
+        decisions = {signal: {"disposition": "retain"} for signal in signals}
 
         observed = _validate_composition_selection(signals, decisions)
 

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
+
 import numpy as np
 import scanpy as sc
 import scipy.sparse as sp

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 
 from .utils import load_config
-
 
 REQUIRED_RESULT_COLUMNS = {
     "gene_id",
@@ -61,12 +60,7 @@ def _bh_adjust(values: np.ndarray) -> np.ndarray:
 def _resolve_manifest_path(output_dir: Path, value: str) -> Path:
     raw = str(value).strip()
     windows_path = PureWindowsPath(raw)
-    if (
-        not raw
-        or raw.startswith(("/", "\\"))
-        or windows_path.drive
-        or Path(raw).is_absolute()
-    ):
+    if not raw or raw.startswith(("/", "\\")) or windows_path.drive or Path(raw).is_absolute():
         raise ValueError(f"Manifest path must be relative: {value!r}")
 
     candidate = (output_dir / Path(raw)).resolve()
@@ -122,9 +116,7 @@ def validate(
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
     missing = [
-        str(path)
-        for path in paths.values()
-        if not path.is_file() or path.stat().st_size == 0
+        str(path) for path in paths.values() if not path.is_file() or path.stat().st_size == 0
     ]
     record(
         "required_outputs_exist",
@@ -142,17 +134,12 @@ def validate(
             "requires_manual_review": True,
             "requires_technical_manual_review": True,
             "biological_interpretation_required": True,
-            "interpretation_status": (
-                "technical_validation_only_no_biological_claims"
-            ),
+            "interpretation_status": ("technical_validation_only_no_biological_claims"),
             "checks": checks,
             "summary": {},
         }
         _write_json(report_path, report)
-        raise ValueError(
-            "Pseudobulk technical validation failed: required outputs are "
-            "missing."
-        )
+        raise ValueError("Pseudobulk technical validation failed: required outputs are missing.")
 
     audit = json.loads(paths["aggregation_audit"].read_text(encoding="utf-8"))
     profiles = pd.read_csv(paths["profiles"])
@@ -175,9 +162,7 @@ def validate(
             log_errors.append(f"Log is not valid UTF-8: {log_path}")
             continue
         if completion_marker not in log_text:
-            log_errors.append(
-                f"Completion marker {completion_marker!r} is absent: {log_path}"
-            )
+            log_errors.append(f"Completion marker {completion_marker!r} is absent: {log_path}")
     record(
         "execution_logs",
         not log_errors,
@@ -204,9 +189,7 @@ def validate(
         profile_columns_ok
         and profiles["profile_id"].notna().all()
         and not profiles["profile_id"].duplicated().any()
-        and not profiles[["biological_replicate_id", "cell_type"]]
-        .duplicated()
-        .any()
+        and not profiles[["biological_replicate_id", "cell_type"]].duplicated().any()
         and profiles[list(REQUIRED_PROFILE_COLUMNS)].notna().all().all()
         and profiles["n_cells"].ge(contract["min_cells_per_pseudobulk"]).all()
     )
@@ -231,15 +214,10 @@ def validate(
     record(
         "analysis_tiers_match_contract",
         tier_contract_ok,
-        (
-            f"Observed {len(primary)} primary and {len(exploratory)} "
-            "exploratory cell types."
-        ),
+        (f"Observed {len(primary)} primary and {len(exploratory)} exploratory cell types."),
     )
 
-    included = eligibility.loc[
-        eligibility["aggregation_status"].eq("included"), "cell_type"
-    ]
+    included = eligibility.loc[eligibility["aggregation_status"].eq("included"), "cell_type"]
     record(
         "eligibility_matches_contract",
         set(included) == approved and not included.duplicated().any(),
@@ -257,22 +235,14 @@ def validate(
         "n_replicates",
         "age_span_years",
     ]
-    numeric_ok = result_columns_ok and np.isfinite(
-        results[numeric_columns].to_numpy(dtype=float)
-    ).all()
-    probabilities_ok = result_columns_ok and (
-        results[["p_value", "fdr_within_celltype", "fdr_global"]]
-        .ge(0)
-        .all()
-        .all()
-        and results[["p_value", "fdr_within_celltype", "fdr_global"]]
-        .le(1)
-        .all()
-        .all()
+    numeric_ok = (
+        result_columns_ok and np.isfinite(results[numeric_columns].to_numpy(dtype=float)).all()
     )
-    unique_tests = result_columns_ok and not results[
-        ["gene_id", "cell_type"]
-    ].duplicated().any()
+    probabilities_ok = result_columns_ok and (
+        results[["p_value", "fdr_within_celltype", "fdr_global"]].ge(0).all().all()
+        and results[["p_value", "fdr_within_celltype", "fdr_global"]].le(1).all().all()
+    )
+    unique_tests = result_columns_ok and not results[["gene_id", "cell_type"]].duplicated().any()
     record(
         "gene_level_result_integrity",
         result_columns_ok and numeric_ok and probabilities_ok and unique_tests,
@@ -287,14 +257,14 @@ def validate(
         set(group["analysis_tier"]) == {expected_tiers[cell_type]}
         for cell_type, group in results.groupby("cell_type", sort=False)
     )
-    model_formula_ok = results.loc[
-        results["model_scope"].eq("adjusted_primary"), "model_formula"
-    ].eq(contract["primary_formula"]).all()
+    model_formula_ok = (
+        results.loc[results["model_scope"].eq("adjusted_primary"), "model_formula"]
+        .eq(contract["primary_formula"])
+        .all()
+    )
     record(
         "result_analysis_contract",
-        set(results["cell_type"]) == approved
-        and result_tiers_ok
-        and model_formula_ok,
+        set(results["cell_type"]) == approved and result_tiers_ok and model_formula_ok,
         "Result tiers and adjusted formulas match the approved contract.",
     )
 
@@ -324,14 +294,11 @@ def validate(
         not fallback,
         "All cell types used the approved adjusted model."
         if not fallback
-        else "Manual review required for non-primary model scopes: "
-        + ", ".join(fallback),
+        else "Manual review required for non-primary model scopes: " + ", ".join(fallback),
     )
 
     global_recomputed = _bh_adjust(results["p_value"].to_numpy())
-    global_difference = float(
-        np.max(np.abs(global_recomputed - results["fdr_global"].to_numpy()))
-    )
+    global_difference = float(np.max(np.abs(global_recomputed - results["fdr_global"].to_numpy())))
     within_difference = 0.0
     for _, indices in results.groupby("cell_type", sort=False).groups.items():
         index = np.asarray(list(indices), dtype=int)
@@ -380,19 +347,15 @@ def validate(
             "their declared cell type and row count."
         )
         if manifest_ok and not manifest_errors
-        else "; ".join(manifest_errors)
-        or "Manifest rows do not match the result contract.",
+        else "; ".join(manifest_errors) or "Manifest rows do not match the result contract.",
     )
 
     observed_versions = dict(zip(versions["component"], versions["observed"]))
     versions_ok = (
-        observed_versions.get("R", "").startswith(
-            runtime_contract["expected_r_version"]
-        )
+        observed_versions.get("R", "").startswith(runtime_contract["expected_r_version"])
         and observed_versions.get("Bioconductor")
         == runtime_contract["expected_bioconductor_version"]
-        and observed_versions.get("edgeR")
-        == runtime_contract["expected_edger_version"]
+        and observed_versions.get("edgeR") == runtime_contract["expected_edger_version"]
     )
     record(
         "runtime_versions",
@@ -404,9 +367,7 @@ def validate(
         ),
     )
 
-    temporary_outputs = [
-        str(path) for path in output_dir.rglob("*.tmp") if path != report_path
-    ]
+    temporary_outputs = [str(path) for path in output_dir.rglob("*.tmp") if path != report_path]
     record(
         "no_incomplete_outputs",
         not temporary_outputs,
@@ -418,25 +379,19 @@ def validate(
     checks_passed = all(check["passed"] for check in checks)
     summary = {
         "n_profiles": int(len(profiles)),
-        "n_biological_replicates": int(
-            profiles["biological_replicate_id"].nunique()
-        ),
+        "n_biological_replicates": int(profiles["biological_replicate_id"].nunique()),
         "n_genes_input": int(len(genes)),
         "n_cell_types_tested": int(results["cell_type"].nunique()),
         "n_primary_cell_types": int(len(primary)),
         "n_exploratory_cell_types": int(len(exploratory)),
         "n_gene_celltype_tests": int(len(results)),
         "n_global_fdr_lt_0_05": int(results["fdr_global"].lt(0.05).sum()),
-        "n_within_celltype_fdr_lt_0_05": int(
-            results["fdr_within_celltype"].lt(0.05).sum()
-        ),
+        "n_within_celltype_fdr_lt_0_05": int(results["fdr_within_celltype"].lt(0.05).sum()),
         "model_scopes": {
-            str(key): int(value)
-            for key, value in diagnostics["model_scope"].value_counts().items()
+            str(key): int(value) for key, value in diagnostics["model_scope"].value_counts().items()
         },
         "tests_by_cell_type": {
-            str(key): int(value)
-            for key, value in results.groupby("cell_type").size().items()
+            str(key): int(value) for key, value in results.groupby("cell_type").size().items()
         },
     }
     report = {
@@ -447,27 +402,20 @@ def validate(
         "requires_manual_review": True,
         "requires_technical_manual_review": bool(fallback) or not checks_passed,
         "biological_interpretation_required": True,
-        "interpretation_status": (
-            "technical_validation_only_no_biological_claims"
-        ),
+        "interpretation_status": ("technical_validation_only_no_biological_claims"),
         "checks": checks,
         "summary": summary,
     }
     _write_json(report_path, report)
     if not checks_passed:
         failed = [check["name"] for check in checks if not check["passed"]]
-        raise ValueError(
-            "Pseudobulk technical validation failed: " + ", ".join(failed)
-        )
+        raise ValueError("Pseudobulk technical validation failed: " + ", ".join(failed))
     return report
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Validate donor-aware pseudobulk DE outputs without interpreting "
-            "biology."
-        )
+        description=("Validate donor-aware pseudobulk DE outputs without interpreting biology.")
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--outdir", required=True)

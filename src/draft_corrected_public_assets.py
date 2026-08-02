@@ -57,9 +57,7 @@ def _load_asset_decisions(
         _as_bool(asset_decisions.get("public_replacement_approved"))
         and final_approval.get("status") != "approved"
     ):
-        raise ValueError(
-            "Public replacement requires explicit final approval."
-        )
+        raise ValueError("Public replacement requires explicit final approval.")
     by_signal = {
         str(item["signal_id"]): item
         for item in decisions
@@ -77,25 +75,18 @@ def _validate_composition_selection(
     decisions: dict[str, dict[str, Any]],
 ) -> list[str]:
     if len(selected_signal_ids) != 3:
-        raise ValueError(
-            "The approved composition draft must contain three signals."
-        )
+        raise ValueError("The approved composition draft must contain three signals.")
     cell_types: list[str] = []
     for signal_id in selected_signal_ids:
         decision = decisions.get(signal_id)
         if decision is None:
             raise ValueError(f"Unknown composition signal: {signal_id}")
         if decision.get("disposition") != "retain":
-            raise ValueError(
-                f"Composition draft includes a non-retained signal: "
-                f"{signal_id}"
-            )
+            raise ValueError(f"Composition draft includes a non-retained signal: {signal_id}")
         prefix = "composition::"
         if not signal_id.startswith(prefix):
-            raise ValueError(
-                f"Composition draft includes another analysis: {signal_id}"
-            )
-        cell_types.append(signal_id[len(prefix):])
+            raise ValueError(f"Composition draft includes another analysis: {signal_id}")
+        cell_types.append(signal_id[len(prefix) :])
     return cell_types
 
 
@@ -150,11 +141,7 @@ def plot_composition_core(
         if len(observed) >= 2:
             fitted = stats.linregress(x, y)
             grid = np.linspace(np.nanmin(x), np.nanmax(x), 100)
-            line_color = (
-                PALETTE["secondary"]
-                if fitted.slope >= 0
-                else PALETTE["danger"]
-            )
+            line_color = PALETTE["secondary"] if fitted.slope >= 0 else PALETTE["danger"]
             ax.plot(
                 grid,
                 fitted.intercept + fitted.slope * grid,
@@ -228,14 +215,11 @@ def plot_internal_age_prediction(
         metrics_path,
     )
     selected = predictions.loc[
-        predictions["evaluation_level"].eq("donor")
-        & predictions["is_best_model"].map(_as_bool)
+        predictions["evaluation_level"].eq("donor") & predictions["is_best_model"].map(_as_bool)
     ].copy()
     best = metrics.loc[metrics["is_best"].map(_as_bool)]
     if selected.empty or len(best) != 1:
-        raise ValueError(
-            "Expected donor-level predictions and one selected model."
-        )
+        raise ValueError("Expected donor-level predictions and one selected model.")
     metric = best.iloc[0]
     x = selected["age_true"].to_numpy(dtype=float)
     y = selected["age_pred"].to_numpy(dtype=float)
@@ -325,8 +309,7 @@ def plot_retained_composition_forest(
         evidence_path,
     )
     retained = evidence.loc[
-        evidence["analysis"].eq("composition")
-        & evidence["human_disposition"].eq("retain")
+        evidence["analysis"].eq("composition") & evidence["human_disposition"].eq("retain")
     ].copy()
     if retained.empty:
         raise ValueError("No retained composition associations are available.")
@@ -347,11 +330,7 @@ def plot_retained_composition_forest(
         effect = float(row["effect_pp"])
         low = float(row["ci_low_pp"])
         high = float(row["ci_high_pp"])
-        color = (
-            PALETTE["secondary"]
-            if effect >= 0
-            else PALETTE["danger"]
-        )
+        color = PALETTE["secondary"] if effect >= 0 else PALETTE["danger"]
         filled = row["presentation_tier"] == "core"
         ax.errorbar(
             effect,
@@ -367,14 +346,11 @@ def plot_retained_composition_forest(
             linewidth=1.7,
         )
     labels = [
-        f"{row.cell_type} (n={int(row.n_replicates)})"
-        for row in retained.itertuples(index=False)
+        f"{row.cell_type} (n={int(row.n_replicates)})" for row in retained.itertuples(index=False)
     ]
     ax.set_yticks(np.arange(len(retained)))
     ax.set_yticklabels(labels)
-    ax.set_xlabel(
-        "Adjusted fraction change per 10 years (percentage points)"
-    )
+    ax.set_xlabel("Adjusted fraction change per 10 years (percentage points)")
     ax.set_title(
         "Retained cell-type composition associations with age\n"
         "Points show adjusted estimates with 95% bootstrap confidence intervals"
@@ -518,20 +494,13 @@ def main() -> None:
     corrected_out = Path(args.corrected_out)
     review_config = config.get("result_review", {})
     dispositions_path = Path(str(review_config["dispositions_path"]))
-    asset_decisions, dispositions = _load_asset_decisions(
-        dispositions_path
-    )
-    selected_ids = [
-        str(value)
-        for value in asset_decisions.get("composition_signals", [])
-    ]
+    asset_decisions, dispositions = _load_asset_decisions(dispositions_path)
+    selected_ids = [str(value) for value in asset_decisions.get("composition_signals", [])]
     cell_types = _validate_composition_selection(
         selected_ids,
         dispositions,
     )
-    if asset_decisions.get("signature_figure") != (
-        "omit_from_curated_assets"
-    ):
+    if asset_decisions.get("signature_figure") != ("omit_from_curated_assets"):
         raise ValueError("The approved signature-figure decision changed.")
 
     apply_publication_style()

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import anndata as ad
@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 
 from .utils import ensure_dir, load_config
-
 
 ALIASES = {
     "cell_id": {"cellid", "cell", "cellbarcode", "barcode", "unnamed0"},
@@ -72,9 +71,7 @@ def attach_biological_replicates(adata, cfg: dict[str, Any]) -> dict[str, Any]:
         values = _clean_string(adata.obs[canonical_col])
         missing = int(values.isna().sum())
         if bool(section.get("strict", True)) and missing:
-            raise ValueError(
-                f"{canonical_col} has {missing:,} missing values in AnnData.obs."
-            )
+            raise ValueError(f"{canonical_col} has {missing:,} missing values in AnnData.obs.")
         adata.obs[canonical_col] = values.to_numpy()
         return {
             "enabled": True,
@@ -93,12 +90,9 @@ def attach_biological_replicates(adata, cfg: dict[str, Any]) -> dict[str, Any]:
         )
     mapping_path = Path(str(mapping_value))
     if not mapping_path.exists():
-        raise FileNotFoundError(
-            f"Biological-replicate mapping not found: {mapping_path}"
-        )
+        raise FileNotFoundError(f"Biological-replicate mapping not found: {mapping_path}")
     print(
-        "[biological_replicates] "
-        f"loading cell mapping from {mapping_path}",
+        f"[biological_replicates] loading cell mapping from {mapping_path}",
         flush=True,
     )
 
@@ -121,9 +115,7 @@ def attach_biological_replicates(adata, cfg: dict[str, Any]) -> dict[str, Any]:
     mapping[replicate_col] = _clean_string(mapping[replicate_col])
     if bool(mapping[key_col].duplicated().any()):
         n_duplicates = int(mapping[key_col].duplicated(keep=False).sum())
-        raise ValueError(
-            f"Mapping contains {n_duplicates:,} rows with duplicate cell IDs."
-        )
+        raise ValueError(f"Mapping contains {n_duplicates:,} rows with duplicate cell IDs.")
 
     lookup = mapping.set_index(key_col)[replicate_col]
     obs_keys = pd.Series(
@@ -135,8 +127,7 @@ def attach_biological_replicates(adata, cfg: dict[str, Any]) -> dict[str, Any]:
     missing = int(values.isna().sum())
     if bool(section.get("strict", True)) and missing:
         raise ValueError(
-            f"Biological-replicate mapping missed {missing:,} "
-            f"of {adata.n_obs:,} AnnData cells."
+            f"Biological-replicate mapping missed {missing:,} of {adata.n_obs:,} AnnData cells."
         )
     adata.obs[canonical_col] = values.to_numpy()
     report = {
@@ -177,8 +168,7 @@ def add_canonical_replicate_from_obs(
     missing = int(values.isna().sum())
     if bool(section.get("strict", True)) and missing:
         raise ValueError(
-            f"Cannot create {canonical_col}: {source_col} has "
-            f"{missing:,} missing values."
+            f"Cannot create {canonical_col}: {source_col} has {missing:,} missing values."
         )
     adata.obs[canonical_col] = values.to_numpy()
     return {
@@ -202,9 +192,7 @@ def _build_mapping(
     section = _replicate_config(cfg)
     table_value = section.get("source_table_path")
     if not table_value:
-        raise FileNotFoundError(
-            "biological_replicates.source_table_path is required."
-        )
+        raise FileNotFoundError("biological_replicates.source_table_path is required.")
     table_path = Path(str(table_value))
     if not table_path.exists():
         raise FileNotFoundError(f"Source metadata table not found: {table_path}")
@@ -218,8 +206,7 @@ def _build_mapping(
     source_col = _resolve_column(header, requested_source)
     if key_col is None or source_col is None:
         raise KeyError(
-            "Could not resolve source metadata columns "
-            f"{requested_key!r} and {requested_source!r}."
+            f"Could not resolve source metadata columns {requested_key!r} and {requested_source!r}."
         )
 
     requested_metadata = {
@@ -234,19 +221,14 @@ def _build_mapping(
         for output, requested in requested_metadata.items()
     }
     missing_metadata = [
-        requested_metadata[name]
-        for name, column in resolved_metadata.items()
-        if column is None
+        requested_metadata[name] for name, column in resolved_metadata.items() if column is None
     ]
     if missing_metadata:
         raise KeyError(
-            "Could not resolve required source metadata columns: "
-            + ", ".join(missing_metadata)
+            "Could not resolve required source metadata columns: " + ", ".join(missing_metadata)
         )
 
-    usecols = [key_col, source_col] + [
-        str(column) for column in resolved_metadata.values()
-    ]
+    usecols = [key_col, source_col] + [str(column) for column in resolved_metadata.values()]
     source = pd.read_csv(
         table_path,
         sep=sep,
@@ -257,10 +239,7 @@ def _build_mapping(
         columns={
             key_col: "cell_id",
             source_col: canonical_col,
-            **{
-                str(column): output
-                for output, column in resolved_metadata.items()
-            },
+            **{str(column): output for output, column in resolved_metadata.items()},
         }
     )
     source["cell_id"] = _clean_string(source["cell_id"])
@@ -273,9 +252,7 @@ def _build_mapping(
         raise ValueError("Source metadata contains missing cell IDs.")
     if bool(source["cell_id"].duplicated().any()):
         n_duplicates = int(source["cell_id"].duplicated(keep=False).sum())
-        raise ValueError(
-            f"Source metadata contains {n_duplicates:,} duplicate cell-ID rows."
-        )
+        raise ValueError(f"Source metadata contains {n_duplicates:,} duplicate cell-ID rows.")
     if not obs.index.is_unique:
         raise ValueError("AnnData obs_names are not unique.")
 
@@ -284,9 +261,7 @@ def _build_mapping(
     mapped.index = obs.index
     missing_cells = int(mapped[canonical_col].isna().sum())
     if bool(section.get("strict", True)) and missing_cells:
-        raise ValueError(
-            f"Source metadata missed {missing_cells:,} of {len(obs):,} cells."
-        )
+        raise ValueError(f"Source metadata missed {missing_cells:,} of {len(obs):,} cells.")
 
     mapping = mapped.reset_index(names="cell_id")
     replicate_audit = (
@@ -311,8 +286,7 @@ def _build_mapping(
         "batch_nunique",
     ]
     conflict_counts = {
-        column: int((replicate_audit[column] > 1).sum())
-        for column in conflict_columns
+        column: int((replicate_audit[column] > 1).sum()) for column in conflict_columns
     }
 
     obs_consistency: dict[str, dict[str, int]] = {}
@@ -348,9 +322,7 @@ def _build_mapping(
         "mapped_cells": int(mapping[canonical_col].notna().sum()),
         "missing_cells": missing_cells,
         "unique_cell_ids": int(mapping["cell_id"].nunique()),
-        "unique_biological_replicates": int(
-            mapping[canonical_col].nunique(dropna=True)
-        ),
+        "unique_biological_replicates": int(mapping[canonical_col].nunique(dropna=True)),
         "replicate_conflict_counts": conflict_counts,
         "obs_consistency": obs_consistency,
         "passed": (
@@ -380,9 +352,7 @@ def main() -> None:
 
     mapping, replicate_metadata, report = _build_mapping(obs, cfg)
     if bool(_replicate_config(cfg).get("strict", True)) and not report["passed"]:
-        raise ValueError(
-            "Biological-replicate audit failed; inspect reported conflicts."
-        )
+        raise ValueError("Biological-replicate audit failed; inspect reported conflicts.")
 
     mapping_path = Path(args.mapping_out)
     replicate_path = Path(args.replicate_metadata_out)

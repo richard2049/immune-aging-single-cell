@@ -11,7 +11,13 @@ import pandas as pd
 from scipy import stats
 
 from .biological_replicates import attach_biological_replicates
-from .plot_style import PALETTE, apply_publication_style, finalize_and_save, save_placeholder, style_axis
+from .plot_style import (
+    PALETTE,
+    apply_publication_style,
+    finalize_and_save,
+    save_placeholder,
+    style_axis,
+)
 from .utils import ensure_dir, load_config
 
 SUMMARY_COLUMNS = [
@@ -102,7 +108,9 @@ def _weighted_capped_allocation(weights: np.ndarray, caps: np.ndarray, total: in
     return out
 
 
-def _allocate_group_samples(group_sizes: pd.Series, max_cells: int, min_cells_per_group: int) -> pd.Series:
+def _allocate_group_samples(
+    group_sizes: pd.Series, max_cells: int, min_cells_per_group: int
+) -> pd.Series:
     alloc = pd.Series(0, index=group_sizes.index, dtype=int)
     if group_sizes.empty or max_cells <= 0:
         return alloc
@@ -296,9 +304,13 @@ def _prepare_aggregated_table(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, l
         if age_col not in obs_cols:
             age_col = _first_existing(obs_cols, ["age"])
         if donor_col not in obs_cols:
-            donor_col = _first_existing(obs_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"])
+            donor_col = _first_existing(
+                obs_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
+            )
         if celltype_col not in obs_cols:
-            celltype_col = _first_existing(obs_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"])
+            celltype_col = _first_existing(
+                obs_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"]
+            )
 
         if age_col is None or donor_col is None or celltype_col is None:
             return pd.DataFrame(), [], "Missing required obs columns for age prediction."
@@ -348,9 +360,7 @@ def _prepare_aggregated_table(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, l
             agg_map[c] = (c, "mean")
 
         agg = (
-            cell_df.groupby(["donor_id", "cell_type"], observed=False)
-            .agg(**agg_map)
-            .reset_index()
+            cell_df.groupby(["donor_id", "cell_type"], observed=False).agg(**agg_map).reset_index()
         )
         agg = agg[agg["n_cells"] >= min_cells_per_group].copy()
 
@@ -413,11 +423,13 @@ def _load_model_builders(cfg: dict, latent_cols: list[str], seed: int):
             )
 
     if "hist_gbr" in model_order:
-        hcfg = pcfg.get("hist_gbr_params", [{"max_depth": 4, "learning_rate": 0.05, "max_iter": 300}])
+        hcfg = pcfg.get(
+            "hist_gbr_params", [{"max_depth": 4, "learning_rate": 0.05, "max_iter": 300}]
+        )
         for i, p in enumerate(hcfg):
             params = dict(p)
             params.setdefault("random_state", seed)
-            label = f"hist_gbr_{i+1}"
+            label = f"hist_gbr_{i + 1}"
             candidates.append(
                 {
                     "model": "hist_gbr",
@@ -425,7 +437,10 @@ def _load_model_builders(cfg: dict, latent_cols: list[str], seed: int):
                     "label": label,
                     "params": params,
                     "build": lambda params=params: Pipeline(
-                        steps=[("preproc", preproc_tree), ("reg", HistGradientBoostingRegressor(**params))]
+                        steps=[
+                            ("preproc", preproc_tree),
+                            ("reg", HistGradientBoostingRegressor(**params)),
+                        ]
                     ),
                 }
             )
@@ -461,7 +476,7 @@ def _load_model_builders(cfg: dict, latent_cols: list[str], seed: int):
                 params.setdefault("random_state", seed)
                 params.setdefault("n_jobs", n_jobs)
                 params.setdefault("verbosity", 0)
-                label = f"xgboost_{i+1}"
+                label = f"xgboost_{i + 1}"
                 candidates.append(
                     {
                         "model": "xgboost",
@@ -501,7 +516,7 @@ def _load_model_builders(cfg: dict, latent_cols: list[str], seed: int):
                 params = dict(p)
                 params.setdefault("random_state", seed)
                 params.setdefault("n_jobs", n_jobs)
-                label = f"lightgbm_{i+1}"
+                label = f"lightgbm_{i + 1}"
                 candidates.append(
                     {
                         "model": "lightgbm",
@@ -536,7 +551,9 @@ def _compute_donor_balanced_sample_weights(donor_ids: np.ndarray) -> np.ndarray:
     return weights / mean_w
 
 
-def _fit_with_optional_sample_weight(model, x_train: pd.DataFrame, y_train: np.ndarray, sample_weight: np.ndarray | None) -> None:
+def _fit_with_optional_sample_weight(
+    model, x_train: pd.DataFrame, y_train: np.ndarray, sample_weight: np.ndarray | None
+) -> None:
     if sample_weight is None:
         model.fit(x_train, y_train)
         return
@@ -690,8 +707,12 @@ def _bootstrap_mae_r2_ci_from_pred_frame(
         }
     y_true = pred_df["age_true"].to_numpy(dtype=float)
     y_pred = pred_df["age_pred"].to_numpy(dtype=float)
-    mae_low, mae_high = _bootstrap_metric_ci(y_true, y_pred, metric="mae", n_boot=n_boot, ci=ci, seed=seed)
-    r2_low, r2_high = _bootstrap_metric_ci(y_true, y_pred, metric="r2", n_boot=n_boot, ci=ci, seed=seed + 17)
+    mae_low, mae_high = _bootstrap_metric_ci(
+        y_true, y_pred, metric="mae", n_boot=n_boot, ci=ci, seed=seed
+    )
+    r2_low, r2_high = _bootstrap_metric_ci(
+        y_true, y_pred, metric="r2", n_boot=n_boot, ci=ci, seed=seed + 17
+    )
     return {
         "mae_ci_low": mae_low,
         "mae_ci_high": mae_high,
@@ -899,7 +920,9 @@ def _select_inner_best_candidate(
             clip_predictions=clip_predictions,
             donor_balanced_training=donor_balanced_training,
         )
-        pred_group, pred_donor = _build_prediction_frames(agg_subset=agg_train, y_pred=y_pred, y_base=y_base, fold_id=fold_id)
+        pred_group, pred_donor = _build_prediction_frames(
+            agg_subset=agg_train, y_pred=y_pred, y_base=y_base, fold_id=fold_id
+        )
         score_metrics = (
             _compute_prediction_metrics(
                 y_true=pred_donor["age_true"].to_numpy(dtype=float),
@@ -955,7 +978,9 @@ def _aggregate_group_predictions_to_donor(pred_group: pd.DataFrame) -> pd.DataFr
     return out
 
 
-def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _evaluate_candidates(
+    agg: pd.DataFrame, latent_cols: list[str], cfg: dict
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     from sklearn.model_selection import GroupKFold
 
     pcfg = cfg.get("age_prediction", {})
@@ -965,7 +990,9 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
     clip_predictions = bool(pcfg.get("clip_predictions_to_train_age_range", True))
     donor_balanced_training = bool(pcfg.get("donor_balanced_training", True))
     primary_level_cfg = str(pcfg.get("primary_metric_level", "donor")).strip().lower()
-    primary_level = "donor" if primary_level_cfg not in {"donor", "donor_celltype"} else primary_level_cfg
+    primary_level = (
+        "donor" if primary_level_cfg not in {"donor", "donor_celltype"} else primary_level_cfg
+    )
     bootstrap_iterations = int(pcfg.get("bootstrap_iterations", 2000))
     bootstrap_ci = float(pcfg.get("bootstrap_ci", 0.95))
     seed = int(cfg.get("run", {}).get("seed", 42))
@@ -987,8 +1014,7 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
         overlap = set(groups[train_idx]).intersection(groups[test_idx])
         if overlap:
             raise ValueError(
-                f"Cross-validation fold {fold} leaks "
-                f"{len(overlap)} biological replicate(s)."
+                f"Cross-validation fold {fold} leaks {len(overlap)} biological replicate(s)."
             )
 
     candidates = _load_model_builders(cfg, latent_cols=latent_cols, seed=seed)
@@ -1006,7 +1032,9 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
             clip_predictions=clip_predictions,
             donor_balanced_training=donor_balanced_training,
         )
-        pred_group, pred_donor = _build_prediction_frames(agg_subset=agg, y_pred=y_pred, y_base=y_base, fold_id=fold_id)
+        pred_group, pred_donor = _build_prediction_frames(
+            agg_subset=agg, y_pred=y_pred, y_base=y_base, fold_id=fold_id
+        )
         params_json = json.dumps(cand["params"], sort_keys=True)
         metrics_rows.append(
             _metrics_row_from_predictions(
@@ -1102,8 +1130,12 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
         pred_group_nested["selected_params"] = selected_params
         fold_to_model = {r["outer_fold"]: r["selected_model"] for r in fold_selection_records}
         fold_to_params = {r["outer_fold"]: r["selected_params"] for r in fold_selection_records}
-        pred_donor_nested["selected_model"] = pred_donor_nested["fold"].map(fold_to_model).fillna("")
-        pred_donor_nested["selected_params"] = pred_donor_nested["fold"].map(fold_to_params).fillna("")
+        pred_donor_nested["selected_model"] = (
+            pred_donor_nested["fold"].map(fold_to_model).fillna("")
+        )
+        pred_donor_nested["selected_params"] = (
+            pred_donor_nested["fold"].map(fold_to_params).fillna("")
+        )
 
         nested_params_json = json.dumps(
             {
@@ -1161,7 +1193,9 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
 
     pred_all = pd.concat(pred_rows, axis=0, ignore_index=True)
     best_row = metrics.loc[metrics["is_best"]].iloc[0]
-    best_mask = (pred_all["model"] == best_row["model"]) & (pred_all["params"] == best_row["params"])
+    best_mask = (pred_all["model"] == best_row["model"]) & (
+        pred_all["params"] == best_row["params"]
+    )
     pred_all["is_best_model"] = best_mask
     pred_all = pred_all.sort_values(
         ["is_best_model", "model", "evaluation_level", "donor_id", "cell_type"],
@@ -1171,7 +1205,9 @@ def _evaluate_candidates(agg: pd.DataFrame, latent_cols: list[str], cfg: dict) -
     return pred_all, metrics
 
 
-def _bootstrap_mean_ci(values: np.ndarray, n_boot: int, ci: float, seed: int) -> tuple[float, float, float]:
+def _bootstrap_mean_ci(
+    values: np.ndarray, n_boot: int, ci: float, seed: int
+) -> tuple[float, float, float]:
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
@@ -1190,7 +1226,9 @@ def _bootstrap_mean_ci(values: np.ndarray, n_boot: int, ci: float, seed: int) ->
     return low, high, prob_gt0
 
 
-def _build_model_comparison_summary(pred_all: pd.DataFrame, metrics: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+def _build_model_comparison_summary(
+    pred_all: pd.DataFrame, metrics: pd.DataFrame, cfg: dict
+) -> pd.DataFrame:
     pcfg = cfg.get("age_prediction", {})
     n_boot = int(pcfg.get("bootstrap_iterations", 2000))
     ci = float(pcfg.get("bootstrap_ci", 0.95))
@@ -1203,7 +1241,9 @@ def _build_model_comparison_summary(pred_all: pd.DataFrame, metrics: pd.DataFram
     if "evaluation_level" in pred_all.columns:
         primary_rows = pred_all[pred_all["evaluation_level"].astype(str) == "donor"].copy()
         if primary_rows.empty:
-            primary_rows = pred_all[pred_all["evaluation_level"].astype(str) == "donor_celltype"].copy()
+            primary_rows = pred_all[
+                pred_all["evaluation_level"].astype(str) == "donor_celltype"
+            ].copy()
         if primary_rows.empty:
             primary_rows = pred_all.copy()
     else:
@@ -1243,7 +1283,9 @@ def _build_model_comparison_summary(pred_all: pd.DataFrame, metrics: pd.DataFram
         winner_candidate = int(np.sum(delta > 0))
         winner_reference = int(np.sum(delta < 0))
         ties = int(np.sum(np.isclose(delta, 0.0)))
-        ci_low, ci_high, prob_gt0 = _bootstrap_mean_ci(delta, n_boot=n_boot, ci=ci, seed=seed + len(summary_rows))
+        ci_low, ci_high, prob_gt0 = _bootstrap_mean_ci(
+            delta, n_boot=n_boot, ci=ci, seed=seed + len(summary_rows)
+        )
 
         summary_rows.append(
             {
@@ -1271,12 +1313,18 @@ def _build_model_comparison_summary(pred_all: pd.DataFrame, metrics: pd.DataFram
     out = pd.DataFrame(summary_rows, columns=SUMMARY_COLUMNS)
     if out.empty:
         return out
-    return out.sort_values(["candidate_is_best", "delta_mae_mean"], ascending=[False, False]).reset_index(drop=True)
+    return out.sort_values(
+        ["candidate_is_best", "delta_mae_mean"], ascending=[False, False]
+    ).reset_index(drop=True)
 
 
-def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path: Path, dpi: int, density_label: str) -> None:
+def _plot_observed_vs_pred(
+    pred_best: pd.DataFrame, metrics: pd.DataFrame, path: Path, dpi: int, density_label: str
+) -> None:
     if pred_best.empty:
-        _save_placeholder(path, "Age Prediction: Observed vs Predicted", "No prediction rows available.", dpi)
+        _save_placeholder(
+            path, "Age Prediction: Observed vs Predicted", "No prediction rows available.", dpi
+        )
         return
 
     best = metrics.loc[metrics["is_best"]].iloc[0]
@@ -1302,10 +1350,14 @@ def _plot_observed_vs_pred(pred_best: pd.DataFrame, metrics: pd.DataFrame, path:
     top_models = metrics.head(min(3, metrics.shape[0]))[["model", "mae"]]
     top_txt = "; ".join([f"{r.model}:{r.mae:.2f}" for r in top_models.itertuples(index=False)])
     mae_txt = f"{best['mae']:.2f}"
-    if np.isfinite(float(best.get("mae_ci_low", np.nan))) and np.isfinite(float(best.get("mae_ci_high", np.nan))):
+    if np.isfinite(float(best.get("mae_ci_low", np.nan))) and np.isfinite(
+        float(best.get("mae_ci_high", np.nan))
+    ):
         mae_txt += f" [{float(best['mae_ci_low']):.2f}, {float(best['mae_ci_high']):.2f}]"
     r2_txt = f"{best['r2']:.3f}"
-    if np.isfinite(float(best.get("r2_ci_low", np.nan))) and np.isfinite(float(best.get("r2_ci_high", np.nan))):
+    if np.isfinite(float(best.get("r2_ci_low", np.nan))) and np.isfinite(
+        float(best.get("r2_ci_high", np.nan))
+    ):
         r2_txt += f" [{float(best['r2_ci_low']):.3f}, {float(best['r2_ci_high']):.3f}]"
     txt = (
         f"Model={best['model']}\n"
@@ -1338,7 +1390,9 @@ def _plot_mae_by_celltype(
         .sort_values("mae", ascending=False)
     )
     if ct_all.empty:
-        _save_placeholder(path, "Age Prediction: MAE by Cell Type", "No prediction rows available.", dpi)
+        _save_placeholder(
+            path, "Age Prediction: MAE by Cell Type", "No prediction rows available.", dpi
+        )
         return
 
     ct = ct_all[ct_all["n_groups"] >= int(min_groups_for_plot)].copy()
@@ -1472,7 +1526,9 @@ def main() -> None:
     pred_best = pred_all[pred_all["is_best_model"]].copy()
     if "evaluation_level" in pred_best.columns:
         pred_best_donor = pred_best[pred_best["evaluation_level"].astype(str) == "donor"].copy()
-        pred_best_group = pred_best[pred_best["evaluation_level"].astype(str) == "donor_celltype"].copy()
+        pred_best_group = pred_best[
+            pred_best["evaluation_level"].astype(str) == "donor_celltype"
+        ].copy()
     else:
         pred_best_donor = pd.DataFrame()
         pred_best_group = pd.DataFrame()

@@ -7,7 +7,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .plot_style import DIVERGING_CMAP, PALETTE, apply_publication_style, finalize_and_save, save_placeholder, style_axis
+from .plot_style import (
+    DIVERGING_CMAP,
+    PALETTE,
+    apply_publication_style,
+    finalize_and_save,
+    save_placeholder,
+    style_axis,
+)
 from .utils import ensure_dir, load_config
 
 
@@ -45,7 +52,9 @@ def _as_bool(value: object) -> bool:
 
 def _prepare_comp_effects(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "cell_type" not in df.columns:
-        return pd.DataFrame(columns=["signal_id", "label", "effect", "ci_low", "ci_high", "fdr", "significant"])
+        return pd.DataFrame(
+            columns=["signal_id", "label", "effect", "ci_low", "ci_high", "fdr", "significant"]
+        )
     out = pd.DataFrame()
     out["signal_id"] = df["cell_type"].astype(str)
     out["label"] = df["cell_type"].astype(str)
@@ -62,7 +71,9 @@ def _prepare_comp_effects(df: pd.DataFrame) -> pd.DataFrame:
 
 def _prepare_sig_effects(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or any(c not in df.columns for c in ["cell_type", "signature"]):
-        return pd.DataFrame(columns=["signal_id", "label", "effect", "ci_low", "ci_high", "fdr", "significant"])
+        return pd.DataFrame(
+            columns=["signal_id", "label", "effect", "ci_low", "ci_high", "fdr", "significant"]
+        )
     out = pd.DataFrame()
     out["cell_type"] = df["cell_type"].astype(str)
     out["signature"] = df["signature"].astype(str)
@@ -85,7 +96,9 @@ def _select_top_signals(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
     ranked = df.copy()
     ranked["fdr_rank"] = ranked["fdr"].fillna(np.inf)
     ranked["abs_effect"] = ranked["effect"].abs()
-    ranked = ranked.sort_values(["significant", "fdr_rank", "abs_effect"], ascending=[False, True, False]).reset_index(drop=True)
+    ranked = ranked.sort_values(
+        ["significant", "fdr_rank", "abs_effect"], ascending=[False, True, False]
+    ).reset_index(drop=True)
     return ranked.head(int(max(top_n, 1))).reset_index(drop=True)
 
 
@@ -106,7 +119,17 @@ def _plot_forest_panel(ax, df: pd.DataFrame, panel_title: str, xlabel: str) -> N
         color = PALETTE["secondary"] if effect >= 0 else PALETTE["danger"]
         if np.isfinite(lo) and np.isfinite(hi):
             xerr = np.array([[max(effect - lo, 0.0)], [max(hi - effect, 0.0)]])
-            ax.errorbar(effect, i, xerr=xerr, fmt="o", color=color, ecolor=color, capsize=3, markersize=5, linewidth=1.5)
+            ax.errorbar(
+                effect,
+                i,
+                xerr=xerr,
+                fmt="o",
+                color=color,
+                ecolor=color,
+                capsize=3,
+                markersize=5,
+                linewidth=1.5,
+            )
         else:
             ax.scatter(effect, i, s=24, color=color)
         if bool(row.get("significant", False)):
@@ -126,7 +149,12 @@ def _plot_effect_ci_forest(
     dpi: int,
 ) -> None:
     if comp_top.empty and sig_top.empty:
-        save_placeholder(path, "Supplementary: Effect Sizes with 95% CIs", "No composition/signature effects available.", dpi)
+        save_placeholder(
+            path,
+            "Supplementary: Effect Sizes with 95% CIs",
+            "No composition/signature effects available.",
+            dpi,
+        )
         return
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), gridspec_kw={"width_ratios": [1, 1.3]})
@@ -147,7 +175,9 @@ def _plot_effect_ci_forest(
 
 
 def _scenario_label(row: pd.Series) -> str:
-    if {"adjust_covariates", "drop_sparse_age_bins", "min_cells_per_group"}.issubset(set(row.index)):
+    if {"adjust_covariates", "drop_sparse_age_bins", "min_cells_per_group"}.issubset(
+        set(row.index)
+    ):
         a = int(_as_bool(row["adjust_covariates"]))
         d = int(_as_bool(row["drop_sparse_age_bins"]))
         try:
@@ -180,8 +210,12 @@ def _build_stability_matrix(
 
     label_by_signal = selected.set_index("signal_id")["label"].to_dict()
     scenario_labels = manifest.apply(_scenario_label, axis=1).tolist()
-    values = pd.DataFrame(np.nan, index=selected["signal_id"].tolist(), columns=scenario_labels, dtype=float)
-    signif = pd.DataFrame(False, index=selected["signal_id"].tolist(), columns=scenario_labels, dtype=bool)
+    values = pd.DataFrame(
+        np.nan, index=selected["signal_id"].tolist(), columns=scenario_labels, dtype=float
+    )
+    signif = pd.DataFrame(
+        False, index=selected["signal_id"].tolist(), columns=scenario_labels, dtype=bool
+    )
 
     for _, row in manifest.iterrows():
         col = _scenario_label(row)
@@ -205,7 +239,9 @@ def _build_stability_matrix(
 def _plot_stability_panel(ax, values: pd.DataFrame, signif: pd.DataFrame, title: str) -> None:
     if values.empty or values.shape[1] < 2:
         ax.axis("off")
-        ax.text(0.5, 0.5, "Run sensitivity scenarios to populate this panel", ha="center", va="center")
+        ax.text(
+            0.5, 0.5, "Run sensitivity scenarios to populate this panel", ha="center", va="center"
+        )
         ax.set_title(title)
         return
 
@@ -226,7 +262,16 @@ def _plot_stability_panel(ax, values: pd.DataFrame, signif: pd.DataFrame, title:
     for i in range(values.shape[0]):
         for j in range(values.shape[1]):
             if bool(signif.iloc[i, j]):
-                ax.text(j, i, "*", ha="center", va="center", color="black", fontsize=9, fontweight="bold")
+                ax.text(
+                    j,
+                    i,
+                    "*",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=9,
+                    fontweight="bold",
+                )
 
     cbar = plt.colorbar(im, ax=ax, shrink=0.75)
     cbar.set_label("Effect per 10y")
@@ -249,18 +294,35 @@ def _plot_stability_heatmap(
         )
         return
 
-    if {"source", "adjust_covariates", "drop_sparse_age_bins", "min_cells_per_group"}.issubset(set(manifest.columns)):
-        source_order = {"baseline": 0, "adjust_covariates": 1, "drop_sparse_age_bins": 2, "min_cells_per_group": 3}
+    if {"source", "adjust_covariates", "drop_sparse_age_bins", "min_cells_per_group"}.issubset(
+        set(manifest.columns)
+    ):
+        source_order = {
+            "baseline": 0,
+            "adjust_covariates": 1,
+            "drop_sparse_age_bins": 2,
+            "min_cells_per_group": 3,
+        }
         manifest = manifest.copy()
         manifest["_src_order"] = manifest["source"].map(lambda x: source_order.get(str(x), 9))
         manifest = manifest.sort_values(
-            ["_src_order", "adjust_covariates", "drop_sparse_age_bins", "min_cells_per_group", "scenario"]
+            [
+                "_src_order",
+                "adjust_covariates",
+                "drop_sparse_age_bins",
+                "min_cells_per_group",
+                "scenario",
+            ]
         ).drop(columns="_src_order")
     elif "scenario" in manifest.columns:
         manifest = manifest.sort_values("scenario")
 
-    comp_vals, comp_sig = _build_stability_matrix(manifest=manifest, selected=comp_top, mode="composition")
-    sig_vals, sig_sig = _build_stability_matrix(manifest=manifest, selected=sig_top, mode="signature")
+    comp_vals, comp_sig = _build_stability_matrix(
+        manifest=manifest, selected=comp_top, mode="composition"
+    )
+    sig_vals, sig_sig = _build_stability_matrix(
+        manifest=manifest, selected=sig_top, mode="signature"
+    )
 
     fig, axes = plt.subplots(2, 1, figsize=(13, 8), gridspec_kw={"height_ratios": [1, 1.2]})
     _plot_stability_panel(
@@ -320,7 +382,9 @@ def main() -> None:
         dpi=dpi,
     )
     _plot_stability_heatmap(
-        manifest_path=Path(args.sensitivity_manifest) if args.sensitivity_manifest else Path("__missing__"),
+        manifest_path=Path(args.sensitivity_manifest)
+        if args.sensitivity_manifest
+        else Path("__missing__"),
         comp_top=comp_top,
         sig_top=sig_top,
         path=Path(args.fig_stability),

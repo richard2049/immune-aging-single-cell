@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
-import shutil
 import re
+import shutil
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -136,9 +136,7 @@ def _deduplicate_metadata(meta: pd.DataFrame, key: str) -> pd.DataFrame:
     """Collapse exact duplicates and reject ambiguous metadata keys."""
     if not _present_mask(meta[key]).all():
         n_missing = int((~_present_mask(meta[key])).sum())
-        raise ValueError(
-            f"metadata.table_join_key '{key}' contains {n_missing} missing values"
-        )
+        raise ValueError(f"metadata.table_join_key '{key}' contains {n_missing} missing values")
 
     duplicated = meta[key].duplicated(keep=False)
     if not duplicated.any():
@@ -161,7 +159,9 @@ def _deduplicate_metadata(meta: pd.DataFrame, key: str) -> pd.DataFrame:
     return meta.drop_duplicates().copy()
 
 
-def _coalesce_prefer_right(merged: pd.DataFrame, base_col: str, left_tag: str, right_tag: str) -> pd.DataFrame:
+def _coalesce_prefer_right(
+    merged: pd.DataFrame, base_col: str, left_tag: str, right_tag: str
+) -> pd.DataFrame:
     left_col = f"{base_col}_x"
     right_col = f"{base_col}_y"
     if left_col in merged.columns and right_col in merged.columns:
@@ -170,13 +170,17 @@ def _coalesce_prefer_right(merged: pd.DataFrame, base_col: str, left_tag: str, r
         right_present = _present_mask(right_vals)
         left_present = _present_mask(left_vals)
         merged[base_col] = right_vals.where(right_present, left_vals)
-        merged[f"{base_col}_source"] = np.where(right_present, right_tag, np.where(left_present, left_tag, "missing"))
+        merged[f"{base_col}_source"] = np.where(
+            right_present, right_tag, np.where(left_present, left_tag, "missing")
+        )
         both = right_present & left_present
         mismatch = both & (right_vals.astype(str) != left_vals.astype(str))
         merged[f"{base_col}_conflict"] = mismatch.to_numpy()
         n_conflicts = int(mismatch.sum())
         if n_conflicts > 0:
-            print(f"[metadata] {base_col}: found {n_conflicts} row-wise conflicts between {left_col} and {right_col}.")
+            print(
+                f"[metadata] {base_col}: found {n_conflicts} row-wise conflicts between {left_col} and {right_col}."
+            )
         return merged
 
     if right_col in merged.columns and base_col not in merged.columns:
@@ -194,7 +198,9 @@ def _coalesce_prefer_right(merged: pd.DataFrame, base_col: str, left_tag: str, r
         return merged
 
     if base_col in merged.columns:
-        merged[f"{base_col}_source"] = np.where(_present_mask(merged[base_col]), left_tag, "missing")
+        merged[f"{base_col}_source"] = np.where(
+            _present_mask(merged[base_col]), left_tag, "missing"
+        )
         merged[f"{base_col}_conflict"] = False
     return merged
 
@@ -274,9 +280,7 @@ def _merge_external_metadata(adata, cfg: dict) -> None:
             f"Metadata join left {n_unmatched} of {left.shape[0]} observations unmatched"
         )
     if n_unmatched:
-        print(
-            f"[metadata] Explicitly allowing {n_unmatched} unmatched observations"
-        )
+        print(f"[metadata] Explicitly allowing {n_unmatched} unmatched observations")
     # Canonical donor_id: prefer metadata table (donor_id_y), fallback parsed (donor_id_x).
     field_donor = str(cfg.get("donor_field", "donor_id"))
     merged = _coalesce_prefer_right(

@@ -1,13 +1,16 @@
 from __future__ import annotations
+
 import argparse
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import anndata as ad
 import numpy as np
 import scanpy as sc
-from .utils import load_config, ensure_dir
+
+from .utils import ensure_dir, load_config
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -60,7 +63,10 @@ def main():
                 else:
                     adata = adata_backed.to_memory()
             finally:
-                if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
+                if (
+                    hasattr(adata_backed, "file")
+                    and getattr(adata_backed, "file", None) is not None
+                ):
                     adata_backed.file.close()
 
             adata.var_names_make_unique()
@@ -81,6 +87,7 @@ def main():
         return
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
+
 
 if __name__ == "__main__":
     main()

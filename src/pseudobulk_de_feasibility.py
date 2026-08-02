@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import anndata as ad
@@ -58,8 +58,7 @@ def _resolve_matrix_path(
     if path not in h5:
         available = sorted(h5.get("layers", {}).keys())
         raise ValueError(
-            f"Configured count layer {configured_layer!r} is absent. "
-            f"Available layers: {available}"
+            f"Configured count layer {configured_layer!r} is absent. Available layers: {available}"
         )
     return path, f'adata.layers["{configured_layer}"]'
 
@@ -138,8 +137,7 @@ def _scan_csr_counts(
                     negative_values += int(np.count_nonzero(finite_values < 0))
                     fractional_values += int(
                         np.count_nonzero(
-                            np.abs(finite_values - np.rint(finite_values))
-                            > integer_tolerance
+                            np.abs(finite_values - np.rint(finite_values)) > integer_tolerance
                         )
                     )
                     min_value = min(min_value, float(np.min(finite_values)))
@@ -277,14 +275,11 @@ def _load_external_replicate_ids(
         )
     table_path = Path(table_value)
     if not table_path.exists():
-        raise FileNotFoundError(
-            f"Replicate metadata table not found: {table_path}"
-        )
+        raise FileNotFoundError(f"Replicate metadata table not found: {table_path}")
 
     sep = str(pcfg.get("replicate_table_sep", mcfg.get("table_sep", ",")))
     requested_key = str(
-        pcfg.get("replicate_table_join_key")
-        or mcfg.get("table_join_key", "cell_id")
+        pcfg.get("replicate_table_join_key") or mcfg.get("table_join_key", "cell_id")
     )
     header = list(pd.read_csv(table_path, sep=sep, nrows=0).columns)
     table_key = _resolve_external_column(header, requested_key)
@@ -303,26 +298,18 @@ def _load_external_replicate_ids(
         dtype={table_key: "string", table_replicate_col: "string"},
     )
     metadata[table_key] = _clean_string_column(metadata[table_key])
-    metadata[table_replicate_col] = _clean_string_column(
-        metadata[table_replicate_col]
-    )
+    metadata[table_replicate_col] = _clean_string_column(metadata[table_replicate_col])
     metadata = metadata.dropna(subset=[table_key])
 
     conflicts = (
-        metadata.groupby(table_key, observed=True)[table_replicate_col]
-        .nunique(dropna=True)
-        .gt(1)
+        metadata.groupby(table_key, observed=True)[table_replicate_col].nunique(dropna=True).gt(1)
     )
     if bool(conflicts.any()):
         raise ValueError(
-            f"{int(conflicts.sum())} cell IDs map to multiple replicate IDs "
-            f"in {table_path}."
+            f"{int(conflicts.sum())} cell IDs map to multiple replicate IDs in {table_path}."
         )
 
-    lookup = (
-        metadata.drop_duplicates(subset=[table_key])
-        .set_index(table_key)[table_replicate_col]
-    )
+    lookup = metadata.drop_duplicates(subset=[table_key]).set_index(table_key)[table_replicate_col]
     replicate_ids = pd.Series(
         obs_index.astype(str),
         index=obs_index,
@@ -348,9 +335,7 @@ def _load_obs(
     try:
         columns = list(adata.obs.columns)
         pcfg = config.get("pseudobulk_de_feasibility", {})
-        age_col = _resolve_obs_column(
-            columns, pcfg.get("age_col"), ["age"], required=True
-        )
+        age_col = _resolve_obs_column(columns, pcfg.get("age_col"), ["age"], required=True)
         donor_col = _resolve_obs_column(
             columns,
             pcfg.get("donor_col"),
@@ -372,9 +357,7 @@ def _load_obs(
             required=False,
         )
         covariate_cols = [
-            str(col)
-            for col in pcfg.get("covariate_cols", ["sex", "batch"])
-            if str(col) in columns
+            str(col) for col in pcfg.get("covariate_cols", ["sex", "batch"]) if str(col) in columns
         ]
 
         selected = [age_col, donor_col, celltype_col]
@@ -389,8 +372,7 @@ def _load_obs(
 
     if len(obs) != expected_n_obs:
         raise ValueError(
-            f"obs has {len(obs):,} rows, but the count matrix has "
-            f"{expected_n_obs:,} rows."
+            f"obs has {len(obs):,} rows, but the count matrix has {expected_n_obs:,} rows."
         )
 
     rename = {age_col: "age", donor_col: "donor_label", celltype_col: "cell_type"}
@@ -486,28 +468,15 @@ def _audit_metadata(
     )
 
     pairs = obs[["replicate_id", "sample_id"]].dropna().drop_duplicates()
-    samples_per_replicate = pairs.groupby("replicate_id", observed=True)[
-        "sample_id"
-    ].nunique()
-    replicates_per_sample = pairs.groupby("sample_id", observed=True)[
-        "replicate_id"
-    ].nunique()
+    samples_per_replicate = pairs.groupby("replicate_id", observed=True)["sample_id"].nunique()
+    replicates_per_sample = pairs.groupby("sample_id", observed=True)["replicate_id"].nunique()
     if pairs.empty:
         relationship = "unavailable"
-    elif (
-        int(samples_per_replicate.max()) == 1
-        and int(replicates_per_sample.max()) == 1
-    ):
+    elif int(samples_per_replicate.max()) == 1 and int(replicates_per_sample.max()) == 1:
         relationship = "one_to_one"
-    elif (
-        int(samples_per_replicate.max()) > 1
-        and int(replicates_per_sample.max()) == 1
-    ):
+    elif int(samples_per_replicate.max()) > 1 and int(replicates_per_sample.max()) == 1:
         relationship = "multiple_samples_per_replicate"
-    elif (
-        int(samples_per_replicate.max()) == 1
-        and int(replicates_per_sample.max()) > 1
-    ):
+    elif int(samples_per_replicate.max()) == 1 and int(replicates_per_sample.max()) > 1:
         relationship = "multiple_replicates_per_sample"
     else:
         relationship = "many_to_many"
@@ -533,9 +502,7 @@ def _audit_metadata(
     }
     report = {
         "n_cells": int(len(obs)),
-        "n_biological_replicates": int(
-            obs["replicate_id"].nunique(dropna=True)
-        ),
+        "n_biological_replicates": int(obs["replicate_id"].nunique(dropna=True)),
         "n_donor_labels": int(obs["donor_label"].nunique(dropna=True)),
         "n_samples": int(obs["sample_id"].nunique(dropna=True)),
         "n_cell_types": int(obs["cell_type"].nunique(dropna=True)),
@@ -543,14 +510,10 @@ def _audit_metadata(
         "replicate_metadata_conflicts": conflict_counts,
         "replicate_sample_relationship": relationship,
         "max_samples_per_replicate": (
-            int(samples_per_replicate.max())
-            if not samples_per_replicate.empty
-            else None
+            int(samples_per_replicate.max()) if not samples_per_replicate.empty else None
         ),
         "max_replicates_per_sample": (
-            int(replicates_per_sample.max())
-            if not replicates_per_sample.empty
-            else None
+            int(replicates_per_sample.max()) if not replicates_per_sample.empty else None
         ),
     }
     return replicate_audit, report
@@ -588,9 +551,7 @@ def _build_replicate_celltype_support(
         .reset_index()
     )
     support["passes_candidate_min_cells"] = support["n_cells"] >= min_cells
-    return support.sort_values(["cell_type", "replicate_id"]).reset_index(
-        drop=True
-    )
+    return support.sort_values(["cell_type", "replicate_id"]).reset_index(drop=True)
 
 
 def _build_design_diagnostic(
@@ -714,9 +675,7 @@ def _summarize_celltype_support(
         age_span = age_max - age_min if not passing.empty else np.nan
         exclusion_reasons: list[str] = []
         if len(passing) < min_donors:
-            exclusion_reasons.append(
-                "insufficient_biological_replicates_with_min_cells"
-            )
+            exclusion_reasons.append("insufficient_biological_replicates_with_min_cells")
         if not np.isfinite(age_span) or age_span < min_age_span:
             exclusion_reasons.append("insufficient_age_span")
         if not bool(design["estimable"]):
@@ -726,22 +685,14 @@ def _summarize_celltype_support(
             {
                 "cell_type": str(cell_type),
                 "total_cells": int(all_profiles["n_cells"].sum()),
-                "replicates_total": int(
-                    all_profiles["replicate_id"].nunique()
-                ),
-                "replicates_meeting_min_cells": int(
-                    passing["replicate_id"].nunique()
-                ),
+                "replicates_total": int(all_profiles["replicate_id"].nunique()),
+                "replicates_meeting_min_cells": int(passing["replicate_id"].nunique()),
                 "candidate_min_cells": min_cells,
                 "median_cells_per_passing_donor": (
-                    float(passing["n_cells"].median())
-                    if not passing.empty
-                    else np.nan
+                    float(passing["n_cells"].median()) if not passing.empty else np.nan
                 ),
                 "median_library_size_per_passing_donor": (
-                    float(passing["library_size"].median())
-                    if not passing.empty
-                    else np.nan
+                    float(passing["library_size"].median()) if not passing.empty else np.nan
                 ),
                 "age_min": age_min,
                 "age_max": age_max,
@@ -841,8 +792,7 @@ def run_feasibility_audit(
     configured_layer = pcfg.get("count_layer")
 
     print(
-        "[pseudobulk_feasibility] "
-        f"starting full count audit: {h5ad_path}",
+        f"[pseudobulk_feasibility] starting full count audit: {h5ad_path}",
         flush=True,
     )
     matrix_audit, row_library_sizes = _scan_csr_counts(
@@ -864,9 +814,7 @@ def run_feasibility_audit(
     replicate_audit, metadata_audit = _audit_metadata(
         obs, covariate_cols=resolved_columns["covariate_cols"]
     )
-    replicate_audit.to_csv(
-        outdir / "replicate_metadata_audit.csv", index=False
-    )
+    replicate_audit.to_csv(outdir / "replicate_metadata_audit.csv", index=False)
 
     support = _build_replicate_celltype_support(
         obs=obs,
@@ -874,9 +822,7 @@ def run_feasibility_audit(
         covariate_cols=resolved_columns["covariate_cols"],
         min_cells=min_cells,
     )
-    support.to_csv(
-        outdir / "replicate_celltype_support.csv", index=False
-    )
+    support.to_csv(outdir / "replicate_celltype_support.csv", index=False)
     celltype_summary, design_diagnostics = _summarize_celltype_support(
         support=support,
         covariate_cols=resolved_columns["covariate_cols"],
@@ -885,12 +831,8 @@ def run_feasibility_audit(
         min_age_span=min_age_span,
         min_residual_df=min_residual_df,
     )
-    celltype_summary.to_csv(
-        outdir / "celltype_support_summary.csv", index=False
-    )
-    design_diagnostics.to_csv(
-        outdir / "design_diagnostics.csv", index=False
-    )
+    celltype_summary.to_csv(outdir / "celltype_support_summary.csv", index=False)
+    design_diagnostics.to_csv(outdir / "design_diagnostics.csv", index=False)
 
     edger_environment = _audit_edger_environment()
     metadata_conflicts = metadata_audit["replicate_metadata_conflicts"]
@@ -915,9 +857,7 @@ def run_feasibility_audit(
 
     eligible_profiles = support[
         support["cell_type"].isin(
-            celltype_summary.loc[
-                celltype_summary["candidate_eligible"], "cell_type"
-            ]
+            celltype_summary.loc[celltype_summary["candidate_eligible"], "cell_type"]
         )
         & support["passes_candidate_min_cells"]
     ]
@@ -941,22 +881,16 @@ def run_feasibility_audit(
         "metadata_audit": metadata_audit,
         "celltype_support": {
             "cell_types_total": int(len(celltype_summary)),
-            "cell_types_candidate_eligible": int(
-                celltype_summary["candidate_eligible"].sum()
-            ),
+            "cell_types_candidate_eligible": int(celltype_summary["candidate_eligible"].sum()),
             "eligible_cell_types": celltype_summary.loc[
                 celltype_summary["candidate_eligible"], "cell_type"
             ].tolist(),
-            "eligible_replicate_celltype_profiles": int(
-                len(eligible_profiles)
-            ),
+            "eligible_replicate_celltype_profiles": int(len(eligible_profiles)),
         },
         "sample_role": sample_role,
         "memory_estimate": {
             "dense_int64_pseudobulk_matrix_bytes": dense_pseudobulk_bytes,
-            "planned_aggregation": (
-                "sparse chunked sum; dense cell-by-gene conversion prohibited"
-            ),
+            "planned_aggregation": ("sparse chunked sum; dense cell-by-gene conversion prohibited"),
         },
         "edger_environment": edger_environment,
         "implementation_blockers": blockers,

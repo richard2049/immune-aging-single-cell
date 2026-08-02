@@ -112,7 +112,9 @@ def save_placeholder(path: Path, title: str, message: str, dpi: int) -> None:
     finalize_and_save(fig, path, dpi)
 
 
-def categorical_palette(labels: list[str], other_label: str = "Other", other_color: str = "#B0B0B0") -> list[str]:
+def categorical_palette(
+    labels: list[str], other_label: str = "Other", other_color: str = "#B0B0B0"
+) -> list[str]:
     labels = [str(x) for x in labels]
     non_other = [x for x in labels if x != other_label]
     colors: dict[str, str] = {}
@@ -120,4 +122,7 @@ def categorical_palette(labels: list[str], other_label: str = "Other", other_col
         colors[lab] = DISTINCT_CATEGORICAL_COLORS[i % len(DISTINCT_CATEGORICAL_COLORS)]
     if other_label in labels:
         colors[other_label] = other_color
-    return [colors.get(lab, DISTINCT_CATEGORICAL_COLORS[i % len(DISTINCT_CATEGORICAL_COLORS)]) for i, lab in enumerate(labels)]
+    return [
+        colors.get(lab, DISTINCT_CATEGORICAL_COLORS[i % len(DISTINCT_CATEGORICAL_COLORS)])
+        for i, lab in enumerate(labels)
+    ]

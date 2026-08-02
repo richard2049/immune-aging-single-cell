@@ -39,9 +39,7 @@ def _deduplicate_cell_metadata(table: pd.DataFrame, cell_col: str) -> pd.DataFra
             conflicts.append(str(cell_id))
     if conflicts:
         preview = ", ".join(conflicts[:5])
-        raise ValueError(
-            f"Conflicting metadata rows for {len(conflicts)} cell IDs: {preview}"
-        )
+        raise ValueError(f"Conflicting metadata rows for {len(conflicts)} cell IDs: {preview}")
     return table.drop_duplicates().copy()
 
 
@@ -50,8 +48,7 @@ def _single_value(values: pd.Series, field: str, replicate_id: str):
     if observed.shape[0] > 1:
         preview = ", ".join(observed.astype(str).head(5))
         raise ValueError(
-            f"Biological replicate '{replicate_id}' has conflicting {field} "
-            f"values: {preview}"
+            f"Biological replicate '{replicate_id}' has conflicting {field} values: {preview}"
         )
     return np.nan if observed.empty else observed.iloc[0]
 
@@ -65,18 +62,14 @@ def _aggregate_replicates(cells: pd.DataFrame) -> pd.DataFrame:
 
     rows = []
     metadata_fields = [
-        field
-        for field in ("donor_id", "age", "sex", "cohort")
-        if field in cells.columns
+        field for field in ("donor_id", "age", "sex", "cohort") if field in cells.columns
     ]
     for replicate_id, group in cells.groupby(key, sort=True):
         row = {
             key: replicate_id,
             "n_cells": int(group.shape[0]),
             "n_samples": int(group["sample_id"].nunique()),
-            "batches": ";".join(
-                sorted({str(value) for value in group["batch"].dropna()})
-            ),
+            "batches": ";".join(sorted({str(value) for value in group["batch"].dropna()})),
         }
         for field in metadata_fields:
             row[field] = _single_value(group[field], field, replicate_id)
@@ -102,12 +95,8 @@ def _cells_from_h5ad(path: Path, replicate_obs_col: str | None) -> pd.DataFrame:
         cells["batch"] = cells["sample_id"]
         if replicate_obs_col:
             if replicate_obs_col not in adata.obs.columns:
-                raise KeyError(
-                    f"Replicate column '{replicate_obs_col}' is missing from adata.obs"
-                )
-            cells["biological_replicate_id"] = adata.obs[
-                replicate_obs_col
-            ].astype(str).to_numpy()
+                raise KeyError(f"Replicate column '{replicate_obs_col}' is missing from adata.obs")
+            cells["biological_replicate_id"] = adata.obs[replicate_obs_col].astype(str).to_numpy()
         return cells
     finally:
         if getattr(adata, "file", None) is not None:
@@ -205,10 +194,7 @@ def main() -> None:
     print(f"Wrote replicate metadata: {out_path}")
     print(f"Biological replicates: {replicate_metadata.shape[0]}")
     if "age" in replicate_metadata:
-        print(
-            "Biological replicates with age: "
-            f"{int(replicate_metadata['age'].notna().sum())}"
-        )
+        print(f"Biological replicates with age: {int(replicate_metadata['age'].notna().sum())}")
 
 
 if __name__ == "__main__":

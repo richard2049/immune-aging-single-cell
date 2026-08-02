@@ -11,7 +11,14 @@ import scipy.sparse as sp
 from scipy import stats
 
 from .biological_replicates import attach_biological_replicates
-from .plot_style import DIVERGING_CMAP, PALETTE, apply_publication_style, finalize_and_save, save_placeholder, style_axis
+from .plot_style import (
+    DIVERGING_CMAP,
+    PALETTE,
+    apply_publication_style,
+    finalize_and_save,
+    save_placeholder,
+    style_axis,
+)
 from .utils import ensure_dir, load_config
 
 DEFAULT_SIGNATURES = {
@@ -155,7 +162,9 @@ def _weighted_capped_allocation(weights: np.ndarray, caps: np.ndarray, total: in
     return out
 
 
-def _allocate_group_samples(group_sizes: pd.Series, max_cells: int, min_cells_per_group: int) -> pd.Series:
+def _allocate_group_samples(
+    group_sizes: pd.Series, max_cells: int, min_cells_per_group: int
+) -> pd.Series:
     alloc = pd.Series(0, index=group_sizes.index, dtype=int)
     if group_sizes.empty or max_cells <= 0:
         return alloc
@@ -336,9 +345,13 @@ def _pick_columns(obs_cols: list[str], cfg: dict) -> dict[str, str | None]:
     if age not in obs_cols:
         age = _first_existing(obs_cols, ["age"])
     if donor not in obs_cols:
-        donor = _first_existing(obs_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"])
+        donor = _first_existing(
+            obs_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
+        )
     if celltype not in obs_cols:
-        celltype = _first_existing(obs_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"])
+        celltype = _first_existing(
+            obs_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"]
+        )
     if sex not in obs_cols:
         sex = _first_existing(obs_cols, ["sex"])
 
@@ -393,12 +406,7 @@ def _materialize_signature_genes(
     chunk_size: int,
 ) -> ad.AnnData:
     present_genes = sorted(
-        {
-            gene
-            for genes in signatures.values()
-            for gene in genes
-            if gene in adata_backed.var_names
-        }
+        {gene for genes in signatures.values() for gene in genes if gene in adata_backed.var_names}
     )
     if not present_genes:
         return ad.AnnData(
@@ -425,9 +433,7 @@ def _materialize_signature_genes(
                 copy=True,
             )
         else:
-            signature_matrix = sp.csr_matrix(
-                np.asarray(signature_matrix, dtype=np.float32)
-            )
+            signature_matrix = sp.csr_matrix(np.asarray(signature_matrix, dtype=np.float32))
 
         if not assume_log1p:
             totals = np.asarray(full_matrix.sum(axis=1)).ravel()
@@ -437,14 +443,11 @@ def _materialize_signature_genes(
                 out=np.zeros_like(totals, dtype=np.float64),
                 where=totals > 0,
             )
-            signature_matrix = sp.diags(scales).dot(
-                signature_matrix
-            ).tocsr()
+            signature_matrix = sp.diags(scales).dot(signature_matrix).tocsr()
             signature_matrix.data = np.log1p(signature_matrix.data)
         matrix_parts.append(signature_matrix)
         print(
-            "[signature_age] "
-            f"materialized {end:,}/{len(selected_indices):,} selected cells",
+            f"[signature_age] materialized {end:,}/{len(selected_indices):,} selected cells",
             flush=True,
         )
 
@@ -461,7 +464,9 @@ def _mode_or_na(values: pd.Series) -> str:
     return str(mode.iloc[0])
 
 
-def _resolve_covariate_cols(obs_cols: list[str], cfg: dict, colmap: dict[str, str | None]) -> list[str]:
+def _resolve_covariate_cols(
+    obs_cols: list[str], cfg: dict, colmap: dict[str, str | None]
+) -> list[str]:
     scfg = cfg.get("signature_age", {})
     requested = scfg.get("covariate_cols")
     if isinstance(requested, list):
@@ -536,7 +541,9 @@ def _prepare_xy_for_stats(
     return x_res, y_res, True
 
 
-def _deduplicate_donors(df: pd.DataFrame, score_col: str, covariate_cols: list[str]) -> pd.DataFrame:
+def _deduplicate_donors(
+    df: pd.DataFrame, score_col: str, covariate_cols: list[str]
+) -> pd.DataFrame:
     cols = ["donor_id", "age", score_col] + [c for c in covariate_cols if c in df.columns]
     out = df[cols].dropna(subset=["donor_id", "age", score_col]).copy()
     if out.empty:
@@ -562,7 +569,9 @@ def _sort_assoc_for_panels(assoc: pd.DataFrame) -> pd.DataFrame:
     return assoc.sort_values(["fdr", "pvalue", "spearman_rho"], ascending=[True, True, False])
 
 
-def _mean_expression_per_signature(adata, signatures: dict[str, list[str]], min_genes_present: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _mean_expression_per_signature(
+    adata, signatures: dict[str, list[str]], min_genes_present: int
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     var_upper = pd.Index([str(v).upper() for v in adata.var_names])
     rows = []
     score_df = pd.DataFrame(index=adata.obs_names)
@@ -614,11 +623,7 @@ def _aggregate_scores(
     for c in score_cols:
         agg_map[c] = (c, "mean")
 
-    grouped = (
-        obs.groupby(["donor_id", "cell_type"], observed=False)
-        .agg(**agg_map)
-        .reset_index()
-    )
+    grouped = obs.groupby(["donor_id", "cell_type"], observed=False).agg(**agg_map).reset_index()
     grouped = grouped[grouped["n_cells"] >= min_cells_per_group].copy()
     return grouped
 
@@ -732,14 +737,18 @@ def _association_table(
     out["fdr"] = _bh_fdr(out["pvalue"].to_numpy())
     out["direction"] = np.where(out["effect_per_10y"] > 0, "increase_with_age", "decrease_with_age")
     out["fdr_significant"] = out["fdr"] < 0.05
-    out = out.sort_values(["fdr", "pvalue", "spearman_rho"], ascending=[True, True, False]).reset_index(drop=True)
+    out = out.sort_values(
+        ["fdr", "pvalue", "spearman_rho"], ascending=[True, True, False]
+    ).reset_index(drop=True)
     out["rank"] = np.arange(1, out.shape[0] + 1)
     return out
 
 
 def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
     if assoc.empty:
-        _save_placeholder(path, "Signature-Age Associations", "No valid donor-level tests were available.", dpi)
+        _save_placeholder(
+            path, "Signature-Age Associations", "No valid donor-level tests were available.", dpi
+        )
         return
 
     pivot_rho = assoc.pivot_table(
@@ -768,7 +777,9 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     im = ax.imshow(pivot_rho.to_numpy(), aspect="auto", cmap=DIVERGING_CMAP, vmin=-1, vmax=1)
     ax.set_xticks(np.arange(len(pivot_rho.columns)))
-    ax.set_xticklabels([_format_signature_label(c) for c in pivot_rho.columns], rotation=30, ha="right")
+    ax.set_xticklabels(
+        [_format_signature_label(c) for c in pivot_rho.columns], rotation=30, ha="right"
+    )
     ax.set_yticks(np.arange(len(pivot_rho.index)))
     ax.set_yticklabels(pivot_rho.index)
     ax.set_title("Signature-age associations by immune cell population", pad=12)
@@ -777,7 +788,16 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
         for j in range(pivot_rho.shape[1]):
             fdr = pivot_fdr.iloc[i, j]
             if pd.notna(fdr) and fdr < 0.05:
-                ax.text(j, i, "*", ha="center", va="center", color="black", fontsize=10, fontweight="bold")
+                ax.text(
+                    j,
+                    i,
+                    "*",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=10,
+                    fontweight="bold",
+                )
 
     cbar = fig.colorbar(im, ax=ax, shrink=0.8)
     cbar.set_label("Spearman rho")
@@ -814,7 +834,9 @@ def _plot_top_panels(
     dpi: int,
 ) -> None:
     if assoc.empty or agg.empty:
-        _save_placeholder(path, "Top Signature-Age Associations", "No associations to display.", dpi)
+        _save_placeholder(
+            path, "Top Signature-Age Associations", "No associations to display.", dpi
+        )
         return
 
     candidates = _filter_assoc_for_panels(
@@ -829,7 +851,12 @@ def _plot_top_panels(
         if min_donors_for_panel > 0:
             filters.append(f"n_donors>={min_donors_for_panel}")
         suffix = f" ({', '.join(filters)})" if filters else ""
-        _save_placeholder(path, "Top Signature-Age Associations", f"No associations satisfy panel filters{suffix}.", dpi)
+        _save_placeholder(
+            path,
+            "Top Signature-Age Associations",
+            f"No associations satisfy panel filters{suffix}.",
+            dpi,
+        )
         return
 
     ranked = _sort_assoc_for_panels(candidates).head(top_n)
@@ -896,8 +923,14 @@ def main() -> None:
     top_n_panels = int(scfg.get("top_n_panels", 8))
     plot_only_fdr_significant = bool(scfg.get("plot_only_fdr_significant", True))
     adjust_covariates = bool(scfg.get("adjust_covariates", True))
-    bootstrap_iterations = int(scfg.get("bootstrap_iterations", cfg.get("age_prediction", {}).get("bootstrap_iterations", 2000)))
-    bootstrap_ci = float(scfg.get("bootstrap_ci", cfg.get("age_prediction", {}).get("bootstrap_ci", 0.95)))
+    bootstrap_iterations = int(
+        scfg.get(
+            "bootstrap_iterations", cfg.get("age_prediction", {}).get("bootstrap_iterations", 2000)
+        )
+    )
+    bootstrap_ci = float(
+        scfg.get("bootstrap_ci", cfg.get("age_prediction", {}).get("bootstrap_ci", 0.95))
+    )
     sampling_strategy = str(scfg.get("sampling_strategy", "stratified")).lower()
     seed = int(cfg.get("run", {}).get("seed", 42))
     assume_log1p = bool(scfg.get("assume_log1p", False))
@@ -926,7 +959,15 @@ def main() -> None:
         pd.DataFrame().to_csv(args.table_scores, index=False)
         _empty_association_table().to_csv(args.table_assoc, index=False)
         if args.table_signature_meta:
-            pd.DataFrame(columns=["signature", "n_genes_requested", "n_genes_present", "present_genes", "missing_genes"]).to_csv(
+            pd.DataFrame(
+                columns=[
+                    "signature",
+                    "n_genes_requested",
+                    "n_genes_present",
+                    "present_genes",
+                    "missing_genes",
+                ]
+            ).to_csv(
                 args.table_signature_meta,
                 index=False,
             )
@@ -954,12 +995,30 @@ def main() -> None:
         pd.DataFrame().to_csv(args.table_scores, index=False)
         _empty_association_table().to_csv(args.table_assoc, index=False)
         if args.table_signature_meta:
-            pd.DataFrame(columns=["signature", "n_genes_requested", "n_genes_present", "present_genes", "missing_genes"]).to_csv(
+            pd.DataFrame(
+                columns=[
+                    "signature",
+                    "n_genes_requested",
+                    "n_genes_present",
+                    "present_genes",
+                    "missing_genes",
+                ]
+            ).to_csv(
                 args.table_signature_meta,
                 index=False,
             )
-        _save_placeholder(Path(args.fig_heatmap), "Signature-Age Associations", "No eligible cells after filtering.", dpi)
-        _save_placeholder(Path(args.fig_top), "Top Signature-Age Associations", "No eligible cells after filtering.", dpi)
+        _save_placeholder(
+            Path(args.fig_heatmap),
+            "Signature-Age Associations",
+            "No eligible cells after filtering.",
+            dpi,
+        )
+        _save_placeholder(
+            Path(args.fig_top),
+            "Top Signature-Age Associations",
+            "No eligible cells after filtering.",
+            dpi,
+        )
         return
 
     adata = _materialize_signature_genes(

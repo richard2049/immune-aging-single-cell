@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from .utils import load_config, ensure_dir
+from .utils import ensure_dir, load_config
 
 
 def _resolve_covariates(obs_columns, scvicfg: dict) -> tuple[list[str], list[str]]:
@@ -14,9 +14,7 @@ def _resolve_covariates(obs_columns, scvicfg: dict) -> tuple[list[str], list[str
         "categorical": sorted(set(raw_cat) - set(cat_keys)),
         "continuous": sorted(set(raw_cont) - set(cont_keys)),
     }
-    if any(missing.values()) and not bool(
-        scvicfg.get("allow_missing_covariates", False)
-    ):
+    if any(missing.values()) and not bool(scvicfg.get("allow_missing_covariates", False)):
         raise KeyError(
             "Configured scVI covariates are missing from adata.obs: "
             f"{missing}. Set scvi.allow_missing_covariates=true only for an "
@@ -81,9 +79,7 @@ def main() -> None:
         "layer": "X" if layer is None else str(layer),
         "categorical_covariates": cat_keys,
         "continuous_covariates": cont_keys,
-        "allow_missing_covariates": bool(
-            scvicfg.get("allow_missing_covariates", False)
-        ),
+        "allow_missing_covariates": bool(scvicfg.get("allow_missing_covariates", False)),
     }
 
     # Save model weights (useful for reproducibility)

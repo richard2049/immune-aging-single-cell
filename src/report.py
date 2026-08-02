@@ -9,7 +9,14 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from .plot_style import PALETTE, apply_publication_style, categorical_palette, finalize_and_save, save_placeholder, style_axis
+from .plot_style import (
+    PALETTE,
+    apply_publication_style,
+    categorical_palette,
+    finalize_and_save,
+    save_placeholder,
+    style_axis,
+)
 from .utils import ensure_dir, load_config
 
 
@@ -146,7 +153,9 @@ def _save_qc_distributions(adata, path: Path, dpi: int) -> None:
     finalize_and_save(fig, path, dpi)
 
 
-def _save_celltype_composition(adata, path: Path, top_n: int, dpi: int, label_col: str | None) -> None:
+def _save_celltype_composition(
+    adata, path: Path, top_n: int, dpi: int, label_col: str | None
+) -> None:
     if label_col is None:
         _save_placeholder(path, "Cell-type Composition", "Missing label column in adata.obs.", dpi)
         return
@@ -185,7 +194,9 @@ def _write_tables(adata, table_dir: Path, label_col: str | None) -> None:
     counts_df["label_source"] = label_col if label_col is not None else "none"
     counts_df.to_csv(table_dir / "cell_type_counts.csv", index=False)
 
-    frac_df = counts_df[["cell_type", "n_cells", "fraction", "fraction_percent", "rank", "label_source"]].copy()
+    frac_df = counts_df[
+        ["cell_type", "n_cells", "fraction", "fraction_percent", "rank", "label_source"]
+    ].copy()
     frac_df.to_csv(table_dir / "cell_type_fractions.csv", index=False)
 
     if "leiden" in adata.obs and label_col is not None and label_col != "leiden":
@@ -260,7 +271,9 @@ def main() -> None:
         show_title=True,
     )
     _save_qc_distributions(adata, fig_dir / "qc_distributions.png", dpi)
-    _save_celltype_composition(adata, fig_dir / "cell_type_composition.png", top_n, dpi, label_col=label_col)
+    _save_celltype_composition(
+        adata, fig_dir / "cell_type_composition.png", top_n, dpi, label_col=label_col
+    )
 
     _write_tables(adata, table_dir, label_col=label_col)
     if hasattr(adata, "file") and getattr(adata, "file", None) is not None:
