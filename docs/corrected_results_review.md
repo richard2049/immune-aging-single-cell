@@ -101,7 +101,7 @@ described as a clinical biomarker or validated aging clock. Its approved present
       `defer`.
 - [x] Approve exact claim wording and captions without causal or clinical language.
 - [x] Approve each proposed asset replacement.
-- [x] Record reviewer, date, and rationale in the decision card.
+- [x] Record reviewer, date, and rationale in the reviewed disposition record.
 
 ## Promotion State
 

@@ -1,4 +1,4 @@
-# immune-aging-scvi
+# Immune Aging Single-Cell
 
 Modular Snakemake pipeline for PBMC single-cell RNA-seq analysis focused on immune aging.
 
@@ -11,6 +11,12 @@ Stack: `scanpy` + `scvi-tools` + `CellTypist`.
   modeling, clustering, and automated annotation.
 - Structured, inspectable outputs: `.h5ad` intermediates, figures, and summary
   tables.
+
+## Documentation
+- [Documentation index](docs/README.md)
+- [Analysis decisions](docs/analysis_decisions.md)
+- [Real-data guide](docs/real_data.md)
+- [Scientific verification contract](docs/verification_contract.md)
 
 ## Pipeline
 1. `ingest` -> `results/01_raw.h5ad`

@@ -74,8 +74,8 @@ residual confounding.
 The exploratory NK-cell population remains separate because its
 reference model used only 18 qualifying replicates and eight residual
 degrees of freedom. Gene annotation, pathway enrichment, candidate
-disposition, external replication, and public wording require a later
-D-class review.
+disposition, external replication, and public wording require a separate human
+scientific review.
 
 ## Operational Notes
 

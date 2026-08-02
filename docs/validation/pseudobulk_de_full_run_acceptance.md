@@ -66,7 +66,7 @@ For review triage, the machine-readable report counts 8,408 tests below 0.05
 within cell type and 7,970 below 0.05 under the global correction. These counts
 are not evidence that every row is biologically credible, independent, or
 suitable for presentation. They require effect-size review, diagnostic review,
-annotation checks, and a separate D-class interpretation stage.
+annotation checks, and a separate human scientific interpretation stage.
 
 ## Corrections During Acceptance
 
@@ -90,8 +90,8 @@ row counts.
 
 - Review candidate effect sizes, profile support, gene annotation, and known
   technical artifacts before interpreting statistical significance.
-- Define and approve a D-class interpretation protocol before ranking genes,
-  running pathway enrichment, producing public figures, or changing the README
-  results narrative.
+- Define and approve a human-review protocol before ranking genes, running
+  pathway enrichment, producing public figures, or changing the README results
+  narrative.
 - Investigate the persistent Snakemake DAG-construction delay separately; a
   60-second target-listing attempt timed out and left no orphaned process.
