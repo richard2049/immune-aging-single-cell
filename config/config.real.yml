@@ -17,6 +17,7 @@ paths:
 
 metadata:
   enabled: true
+  require_all_matches: true
   parse_obs_names: true
   # Cell-level metadata from all_pbmcs tarball.
   table_path: data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv
@@ -50,9 +51,12 @@ doublets:
 
 scvi:
   layer: counts
-  categorical_covariates: []   # set later after checking obs columns (e.g. ["batch"])
+  categorical_covariates: ["batch"]
   continuous_covariates: ["pct_counts_mt", "total_counts", "pct_counts_ribo"]
-  accelerator: gpu
+  allow_missing_covariates: false
+  # Default matches the portable CPU-only environment.yml.
+  # Use "gpu" only after installing a CUDA-enabled PyTorch build.
+  accelerator: cpu
   devices: 1
 
 clustering:
@@ -62,6 +66,7 @@ clustering:
 celltypist:
   enabled: true
   model: Immune_All_Low.pkl
+  model_source: https://www.celltypist.org/models
   majority_voting: false
   chunk_size: 5000
   normalize_target_sum: 10000
@@ -70,42 +75,67 @@ report:
   dpi: 180
   max_celltypes_plot: 25
   label_obs: auto
+  umap_point_size: auto
+  umap_alpha: 0.85
+  umap_legend_loc: right margin
 
 composition_age:
   age_col: age
-  donor_col: donor_id_y
+  donor_col: donor_id
   celltype_col: cell_type
+  covariate_cols: ["sex", "batch"]
+  adjust_covariates: true
   min_cells_per_donor: 200
+  min_donors_per_age_bin: 8
+  drop_sparse_age_bins: false
+  sparse_age_bin_warn_threshold: 8
+  sparse_age_bin_marker: "*"
   min_donors_per_celltype: 8
+  min_donors_for_panel: 12
+  bootstrap_iterations: 5000
+  bootstrap_ci: 0.95
+  plot_only_fdr_significant: true
   top_n_celltypes: 12
   top_n_trends: 8
   dpi: 180
 
 signature_age:
   age_col: age
-  donor_col: donor_id_y
+  donor_col: donor_id
   celltype_col: cell_type
   sex_col: sex
+  covariate_cols: ["sex", "batch"]
+  adjust_covariates: true
   normalize_target_sum: 10000
   assume_log1p: false
+  sampling_strategy: stratified
   max_cells_for_scoring: 200000
   min_genes_present: 3
   min_cells_per_group: 50
   min_donors_per_celltype: 8
+  min_donors_for_panel: 12
+  plot_only_fdr_significant: true
   min_age_span: 10
+  bootstrap_iterations: 5000
+  bootstrap_ci: 0.95
   top_n_panels: 8
   dpi: 180
 
 age_prediction:
   latent_key: X_scVI
   age_col: age
-  donor_col: donor_id_y
+  donor_col: donor_id
   celltype_col: cell_type
+  clip_predictions_to_train_age_range: true
+  sampling_strategy: stratified
   max_cells_for_aggregation: 250000
   min_cells_per_group: 50
   cv_folds: 5
-  model_order: ["ridge", "xgboost"]
+  model_order: ["ridge", "hist_gbr", "xgboost"]
   ridge_alphas: [0.1, 1.0, 10.0, 100.0]
+  hist_gbr_params:
+    - {max_depth: 4, learning_rate: 0.05, max_iter: 300}
+    - {max_depth: 6, learning_rate: 0.03, max_iter: 500}
   xgboost_params:
     - {n_estimators: 300, max_depth: 3, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8, reg_lambda: 1.0}
     - {n_estimators: 500, max_depth: 4, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8, reg_lambda: 1.0}
@@ -113,8 +143,21 @@ age_prediction:
   bootstrap_ci: 0.95
   n_jobs: -1
   top_n_celltypes_plot: 12
+  min_groups_for_mae_plot: 12
   dpi: 180
 
 analysis:
   # expects obs column "age" for aging analyses
   age_bins: [25, 35, 45, 55, 65, 75, 85]
+
+sensitivity_age:
+  enabled: false
+  include_baseline: true
+  adjust_covariates_values: [true, false]
+  drop_sparse_age_bins_values: [true, false]
+  min_cells_per_group_values: [50, 80, 120]
+
+supplementary_age:
+  top_n_composition: 8
+  top_n_signature: 8
+  dpi: 180

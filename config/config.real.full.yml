@@ -13,7 +13,7 @@ run:
   # 25k  -> max_cells: 25000
   # 100k -> max_cells: 100000
   # full -> max_cells: null
-  max_cells: 500000
+  max_cells: 1000000
   seed: 42
 
 paths:
@@ -21,6 +21,7 @@ paths:
 
 metadata:
   enabled: true
+  require_all_matches: true
   parse_obs_names: true
   # Cell-level metadata from all_pbmcs tarball.
   table_path: data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv
@@ -42,7 +43,7 @@ qc:
   # 25k/100k: true
   # full: false
   enabled: false
-  min_genes_per_cell: 200
+  min_genes_per_cell: 800
   min_cells_per_gene: 3
   n_genes_upper_quantile: 0.98
   max_pct_counts_mt: 20
@@ -63,14 +64,15 @@ scvi:
   # 25k/100k: counts
   # full: null
   layer: null
-  # Only set these if columns exist in adata.obs.
-  # Example: ["batch"] or ["batch", "donor_id"]
-  categorical_covariates: []
+  # Metadata integration creates canonical `batch` (prefer table batch, fallback parsed batch).
+  categorical_covariates: ["batch"]
   # If qc.enabled=false, these columns are usually unavailable.
   continuous_covariates: []
-  # 25k/100k: CPU is recommended
-  # full: switch to GPU only after CUDA is validated
-  accelerator: gpu
+  allow_missing_covariates: false
+  # Default matches the portable CPU-only environment.yml.
+  # For full-scale execution, GPU is usually faster but should be enabled only
+  # after installing and validating a CUDA-enabled PyTorch build.
+  accelerator: cpu
   devices: 1
 
 clustering:
@@ -81,6 +83,7 @@ celltypist:
   # For full mode, enable only after confirming available RAM.
   enabled: true
   model: Immune_All_Low.pkl
+  model_source: https://www.celltypist.org/models
   majority_voting: false
   # Stage recommendations:
   # 25k  -> 2000
@@ -94,42 +97,92 @@ report:
   max_celltypes_plot: 25
   # "auto" falls back to leiden if cell_type is unavailable in full mode.
   label_obs: cell_type
+  # UMAP plotting defaults tuned for large datasets: auto point size (None),
+  # slight transparency to reduce overplotting, and right-side legend.
+  umap_point_size: auto
+  umap_alpha: 0.85
+  umap_legend_loc: right margin
 
 composition_age:
   age_col: age
-  donor_col: donor_id_y
+  donor_col: donor_id
   celltype_col: cell_type
+  covariate_cols: ["sex", "batch"]
+  adjust_covariates: true
   min_cells_per_donor: 500
+  min_donors_per_age_bin: 15
+  # Keep sparse bins in the figure (e.g., 75-85) but mark them as low-support.
+  drop_sparse_age_bins: false
+  sparse_age_bin_warn_threshold: 15
+  sparse_age_bin_marker: "*"
   min_donors_per_celltype: 12
+  min_donors_for_panel: 20
+  bootstrap_iterations: 5000
+  bootstrap_ci: 0.95
+  plot_only_fdr_significant: true
   top_n_celltypes: 14
   top_n_trends: 10
   dpi: 180
 
 signature_age:
   age_col: age
-  donor_col: donor_id_y
+  donor_col: donor_id
   celltype_col: cell_type
   sex_col: sex
+  covariate_cols: ["sex", "batch"]
+  adjust_covariates: true
   normalize_target_sum: 10000
   assume_log1p: false
-  max_cells_for_scoring: 150000
+  sampling_strategy: stratified
+  max_cells_for_scoring: 300000
   min_genes_present: 3
-  min_cells_per_group: 80
+  min_cells_per_group: 120
   min_donors_per_celltype: 12
+  min_donors_for_panel: 20
+  plot_only_fdr_significant: true
   min_age_span: 12
+  bootstrap_iterations: 5000
+  bootstrap_ci: 0.95
   top_n_panels: 10
   dpi: 180
+
+pseudobulk_de_feasibility:
+  # Candidate design-gate settings only; these do not authorize DE execution.
+  count_layer: null
+  age_col: age
+  donor_col: donor_id
+  # `donor_id` labels are reused across pools. `tube_id` is the stable
+  # biological replicate identifier in the source cell metadata.
+  replicate_col: tube_id
+  replicate_table_path: data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv
+  replicate_table_join_key: cell_id
+  sample_col: sample_id
+  sample_role: multiplexed_technical_library
+  celltype_col: cell_type
+  covariate_cols: ["sex", "batch"]
+  candidate_min_cells_per_pseudobulk: 50
+  candidate_min_donors_per_celltype: 12
+  candidate_min_age_span: 12
+  candidate_min_residual_df: 5
+  integer_tolerance: 1.0e-6
+  scan_rows_per_chunk: 2000
+  progress_every_rows: 100000
 
 age_prediction:
   latent_key: X_scVI
   age_col: age
-  donor_col: donor_id_y
+  donor_col: donor_id
   celltype_col: cell_type
-  max_cells_for_aggregation: 200000
-  min_cells_per_group: 80
+  clip_predictions_to_train_age_range: true
+  sampling_strategy: stratified
+  max_cells_for_aggregation: 350000
+  min_cells_per_group: 120
   cv_folds: 5
-  model_order: ["ridge", "xgboost"]
+  model_order: ["ridge", "hist_gbr", "xgboost"]
   ridge_alphas: [0.1, 1.0, 10.0, 100.0]
+  hist_gbr_params:
+    - {max_depth: 4, learning_rate: 0.05, max_iter: 300}
+    - {max_depth: 6, learning_rate: 0.03, max_iter: 500}
   xgboost_params:
     - {n_estimators: 300, max_depth: 3, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8, reg_lambda: 1.0}
     - {n_estimators: 500, max_depth: 4, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8, reg_lambda: 1.0}
@@ -137,7 +190,20 @@ age_prediction:
   bootstrap_ci: 0.95
   n_jobs: -1
   top_n_celltypes_plot: 14
+  min_groups_for_mae_plot: 20
   dpi: 180
 
 analysis:
   age_bins: [25, 35, 45, 55, 65, 75, 85]
+
+sensitivity_age:
+  enabled: true
+  include_baseline: true
+  adjust_covariates_values: [true, false]
+  drop_sparse_age_bins_values: [true, false]
+  min_cells_per_group_values: [80, 120, 160]
+
+supplementary_age:
+  top_n_composition: 8
+  top_n_signature: 8
+  dpi: 180

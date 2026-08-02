@@ -1,0 +1,109 @@
+extends: config/config.real.full.yml
+cfg_path: config/config.real.full.replicate_corrected.yml
+
+project:
+  out_dir: results/gse164378_full_replicate_corrected
+
+analysis_checkpoint:
+  annotated_h5ad: results/gse164378_full/06_annotated.h5ad
+  provisional_out_dir: results/gse164378_full
+
+biological_replicates:
+  canonical_col: biological_replicate_id
+  source_col: tube_id
+  source_table_path: data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv
+  source_table_sep: ","
+  source_table_join_key: cell_id
+  donor_label_col: donor_id
+  age_col: age
+  sex_col: sex
+  batch_col: batch
+  sample_col: file_name
+  mapping_path: results/gse164378_full_replicate_corrected/tables/cell_to_biological_replicate.csv
+  mapping_join_key: cell_id
+  strict: true
+
+metadata:
+  table_columns:
+    - donor_id
+    - age
+    - sex
+    - age_group
+    - batch
+    - tube_id
+    - file_name
+
+composition_age:
+  donor_col: biological_replicate_id
+
+signature_age:
+  donor_col: biological_replicate_id
+  materialize_chunk_size: 5000
+
+age_prediction:
+  donor_col: biological_replicate_id
+  n_jobs: 1
+
+sensitivity_age:
+  # Main analyses retain 5,000 iterations; scenario stability uses 500.
+  bootstrap_iterations: 500
+
+pseudobulk_de:
+  # Approved in decision card 001 on 2026-07-30.
+  count_layer: null
+  replicate_col: biological_replicate_id
+  celltype_col: cell_type
+  age_col: age
+  sex_col: sex
+  batch_col: batch
+  sample_col: sample_id
+  min_cells_per_pseudobulk: 50
+  min_replicates_per_celltype: 12
+  min_age_span_years: 12
+  min_residual_df: 5
+  aggregation_chunk_size: 5000
+  primary_formula: "~ sex + batch + age_decade"
+  age_effect_scale: log2_fold_change_per_10_years
+  primary_cell_types:
+    - Tcm/Naive helper T cells
+    - Classical monocytes
+    - CD16+ NK cells
+    - Tem/Effector helper T cells
+    - Tcm/Naive cytotoxic T cells
+    - Tem/Trm cytotoxic T cells
+    - Regulatory T cells
+    - Tem/Temra cytotoxic T cells
+    - Non-classical monocytes
+    - Naive B cells
+    - MAIT cells
+    - Memory B cells
+  exploratory_cell_types:
+    - NK cells
+  runtime:
+    mode: docker
+    docker_context: desktop-linux
+    docker_image: immune-aging-edger:bioc-3.23-edger-4.10.1
+    expected_r_version: "4.6"
+    expected_bioconductor_version: "3.23"
+    expected_edger_version: "4.10.1"
+    timeout_seconds: 14400
+
+pseudobulk_robustness:
+  # Approved in decision card 005. These scenarios diagnose robustness and do
+  # not replace the primary adjusted model or approve biological claims.
+  candidate_global_fdr_threshold: 0.05
+  high_cell_min_cells: 100
+  review_candidates_per_direction_per_celltype: 10
+  run_leave_one_batch_out: true
+  timeout_seconds: 86400
+  diagnostic_review_path: docs/reviews/pseudobulk_diagnostic_plot_review.yml
+
+result_review:
+  # These criteria prioritize rows for human review; they do not approve claims.
+  dispositions_path: docs/reviews/corrected_results_dispositions.yml
+  fdr_threshold: 0.05
+  min_biological_replicates: 20
+  require_effect_ci_excludes_zero: true
+  require_all_sensitivity_scenarios: true
+  require_direction_consistency: true
+  require_fdr_support_all_scenarios: true

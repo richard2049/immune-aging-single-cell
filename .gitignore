@@ -1,5 +1,6 @@
 # data + outputs
 data/raw/
+data/derived/
 results/
 *.h5ad
 *.h5
@@ -12,9 +13,14 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .venv/
+.venv-dev/
 .env/
+.tmp/
+tmp/
+cache/
+.ruff_cache/
 
-# docs assets (allow curated showcase images)
+# versioned documentation assets
 !docs/assets/
 docs/assets/*
 !docs/assets/.gitkeep
@@ -22,5 +28,9 @@ docs/assets/*
 !docs/assets/*.jpg
 !docs/assets/*.jpeg
 !docs/assets/*.webp
+
+# local working documents
+docs/phase2_next_steps_checklist.md
+docs/ai_skills/
 
 .snakemake/

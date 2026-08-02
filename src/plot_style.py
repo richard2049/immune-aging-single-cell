@@ -32,6 +32,36 @@ PALETTE = {
 
 DIVERGING_CMAP = "RdBu_r"
 
+# Distinct categorical palette for many labels (colorblind-aware, high-contrast order).
+DISTINCT_CATEGORICAL_COLORS = [
+    "#1F77B4",
+    "#FF7F0E",
+    "#2CA02C",
+    "#D62728",
+    "#9467BD",
+    "#8C564B",
+    "#E377C2",
+    "#7F7F7F",
+    "#BCBD22",
+    "#17BECF",
+    "#393B79",
+    "#637939",
+    "#8C6D31",
+    "#843C39",
+    "#7B4173",
+    "#3182BD",
+    "#31A354",
+    "#756BB1",
+    "#E6550D",
+    "#969696",
+    "#DD1C77",
+    "#6BAED6",
+    "#74C476",
+    "#FD8D3C",
+    "#9E9AC8",
+    "#BDBDBD",
+]
+
 
 def apply_publication_style(dpi: int = 180) -> None:
     mpl.rcParams.update(
@@ -80,3 +110,14 @@ def save_placeholder(path: Path, title: str, message: str, dpi: int) -> None:
     ax.text(0.5, 0.62, title, ha="center", va="center", fontsize=14, weight="semibold")
     ax.text(0.5, 0.42, message, ha="center", va="center", fontsize=11)
     finalize_and_save(fig, path, dpi)
+
+
+def categorical_palette(labels: list[str], other_label: str = "Other", other_color: str = "#B0B0B0") -> list[str]:
+    labels = [str(x) for x in labels]
+    non_other = [x for x in labels if x != other_label]
+    colors: dict[str, str] = {}
+    for i, lab in enumerate(non_other):
+        colors[lab] = DISTINCT_CATEGORICAL_COLORS[i % len(DISTINCT_CATEGORICAL_COLORS)]
+    if other_label in labels:
+        colors[other_label] = other_color
+    return [colors.get(lab, DISTINCT_CATEGORICAL_COLORS[i % len(DISTINCT_CATEGORICAL_COLORS)]) for i, lab in enumerate(labels)]

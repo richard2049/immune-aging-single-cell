@@ -1,0 +1,49 @@
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'config/config.demo.yaml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'config/config.real.full.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'config/config.real.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'config/config.yaml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/real_data.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/troubleshooting.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'environment.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/age_prediction.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/annotate_celltypist.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/build_donor_metadata.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/cluster.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/composition_age.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/doublets_solo.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/fetch_synapse_metadata.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/ingest.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/metadata_integrate.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/plot_style.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/qc.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/report.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/scvi_train.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/signature_age.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/utils.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'workflows/Snakefile', LF will be replaced by CRLF the next time Git touches it
+ .gitignore                  |  12 [32m+[m[31m-[m
+ README.md                   | 148 [32m++++++[m[31m-[m
+ config/config.demo.yaml     |   8 [32m+[m[31m-[m
+ config/config.real.full.yml |  98 [32m++++[m[31m-[m
+ config/config.real.yml      |  55 [32m++[m[31m-[m
+ config/config.yaml          |  27 [32m+[m[31m-[m
+ docs/real_data.md           |  83 [32m++[m[31m--[m
+ docs/troubleshooting.md     |  73 [32m+++[m[31m-[m
+ environment.yml             |  41 [32m+[m[31m-[m
+ src/age_prediction.py       | 977 [32m++++++++++++++++++++++++++++++++++++++++[m[31m----[m
+ src/annotate_celltypist.py  |  73 [32m+++[m[31m-[m
+ src/build_donor_metadata.py | 398 [32m++++++++[m[31m----------[m
+ src/cluster.py              |  21 [32m+[m[31m-[m
+ src/composition_age.py      | 327 [32m+++++++++++++[m[31m--[m
+ src/doublets_solo.py        |  17 [32m+[m[31m-[m
+ src/ingest.py               |   7 [32m+[m
+ src/metadata_integrate.py   | 123 [32m+++++[m[31m-[m
+ src/plot_style.py           |  41 [32m++[m
+ src/report.py               |  95 [32m++++[m[31m-[m
+ src/scvi_train.py           |  46 [32m++[m[31m-[m
+ src/signature_age.py        | 675 [32m+++++++++++++++++++++++++++[m[31m---[m
+ src/utils.py                |  42 [32m+[m[31m-[m
+ workflows/Snakefile         |  82 [32m+++[m[31m-[m
+ 23 files changed, 2944 insertions(+), 525 deletions(-)
