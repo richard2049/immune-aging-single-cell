@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata below."
-title: "immune-aging-scvi: a reproducible PBMC single-cell immune-aging workflow"
+title: "Immune Aging Single-Cell: a reproducible PBMC single-cell immune-aging workflow"
 type: software
 authors:
   - family-names: "Marín Bautista"

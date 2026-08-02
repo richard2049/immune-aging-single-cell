@@ -9,7 +9,7 @@
 - Public claims authorized: Yes
 - Public asset replacement authorized: Yes
 
-## Proposed README Text
+## Approved README Text
 
 ### Replicate-corrected GSE164378 analysis
 
@@ -39,7 +39,7 @@ Several predefined gene-set scores were associated with age, but these results
 remain exploratory. Signature scores are proxies for the configured gene sets
 and do not directly measure pathway activation or suppression.
 
-## Proposed Figure Captions
+## Approved Figure Captions
 
 ### Selected Composition Trends
 

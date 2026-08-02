@@ -29,8 +29,4 @@ docs/assets/*
 !docs/assets/*.jpeg
 !docs/assets/*.webp
 
-# local working documents
-docs/phase2_next_steps_checklist.md
-docs/ai_skills/
-
 .snakemake/

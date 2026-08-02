@@ -100,8 +100,8 @@ Outputs are written under
   run inventory, explicitly separated from biological interpretation.
 
 These outputs remain analytical results pending review. Pathway enrichment,
-public gene-level figures, and biological claims require a later D-class
-interpretation stage.
+public gene-level figures, and biological claims require a separate human
+scientific interpretation review.
 
 ## Full-Data Execution Status
 
@@ -114,11 +114,10 @@ and remaining manual review requirements.
 
 ## Robustness Audit And Evidence Preparation
 
-Decision card 005 defines a separate C-class stage that reuses the validated
-pseudobulk counts and primary result table. It evaluates a higher profile-cell
-floor, covariate-omission diagnostics, and leave-one-batch-out models. These
-models do not replace the adjusted primary analysis and are not independent
-replications.
+The predefined robustness audit reuses the validated pseudobulk counts and
+primary result table. It evaluates a higher profile-cell floor,
+covariate-omission diagnostics, and leave-one-batch-out models. These models do
+not replace the adjusted primary analysis and are not independent replications.
 
 The full audit completed on 2026-08-02. It preserved 7,970 global-FDR
 candidate rows, recorded 212 completed and three explicitly non-estimable
@@ -152,4 +151,4 @@ python -m src.prepare_pseudobulk_evidence `
 
 The compact `review_queue.csv` is a workload-management artifact. Selection
 for that table does not approve a gene, pathway, or biological claim. Any such
-disposition requires a later D-class human review.
+disposition requires a separate human scientific review.
