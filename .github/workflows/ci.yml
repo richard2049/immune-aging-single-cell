@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install development tools
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Run Ruff lint checks
+        run: python -m ruff check src tests workflows
+
+      - name: Check Ruff formatting
+        run: python -m ruff format --check src tests workflows
+
+      - name: Compile Python sources
+        run: python -m compileall -q src workflows
+
+  scientific-tests:
+    name: Unit tests and demo DAG
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create the scientific environment
+        uses: mamba-org/setup-micromamba@ce51e99f4bb8a82ab7158c4dc59ef4634c59c4f9 # v3.1.0
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+          cache-downloads: false
+          post-cleanup: all
+
+      - name: Report core dependency versions
+        shell: micromamba-shell {0}
+        run: |
+          python --version
+          python -c "import anndata, pandas, scanpy, scvi, snakemake; print('anndata', anndata.__version__); print('pandas', pandas.__version__); print('scanpy', scanpy.__version__); print('scvi-tools', scvi.__version__); print('snakemake', snakemake.__version__)"
+
+      - name: Run unit tests
+        shell: micromamba-shell {0}
+        run: python -m unittest discover -s tests -v
+
+      - name: Construct the demo workflow DAG
+        shell: micromamba-shell {0}
+        run: python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/config.demo.yaml --printshellcmds

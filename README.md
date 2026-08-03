@@ -1,5 +1,7 @@
 # Immune Aging Single-Cell
 
+[![CI](https://github.com/richard2049/immune-aging-single-cell/actions/workflows/ci.yml/badge.svg)](https://github.com/richard2049/immune-aging-single-cell/actions/workflows/ci.yml)
+
 Modular Snakemake pipeline for PBMC single-cell RNA-seq analysis focused on immune aging.
 
 Stack: `scanpy` + `scvi-tools` + `CellTypist`.
@@ -83,6 +85,12 @@ python -m compileall src workflows
 python -m unittest discover -s tests -v
 python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/config.demo.yaml
 ```
+
+GitHub Actions applies the same Ruff and compilation checks, runs the unit-test
+suite in the tracked scientific environment, and constructs the demo workflow
+DAG. Docker-qualified edgeR tests, real-data execution, and full analysis runs
+remain explicit validation steps outside routine CI. A passing CI run confirms
+the automated technical checks only; it does not establish biological validity.
 
 Development-only linting is kept outside the scientific runtime environment:
 
