@@ -23,6 +23,7 @@ without relying on generated result directories.
 - [Pseudobulk robustness audit](pseudobulk_robustness_audit.md)
 - [edgeR runtime qualification](validation/pseudobulk_de_runtime_qualification.md)
 - [Full-run pseudobulk acceptance](validation/pseudobulk_de_full_run_acceptance.md)
+- [Repository readiness audit](validation/repository_readiness_audit.md)
 - [Corrected-result dispositions](reviews/corrected_results_dispositions.yml)
 - [Pseudobulk diagnostic review](reviews/pseudobulk_diagnostic_plot_review.yml)
 - [Corrected public-promotion record](reviews/corrected_public_promotion_record.md)

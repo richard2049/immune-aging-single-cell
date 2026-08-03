@@ -70,11 +70,89 @@ Run a specific target:
 python -m snakemake -s workflows/Snakefile -c 1 age_prediction --configfile config/config.real.yml
 ```
 
-Regenerate only the replicate-corrected donor-level analyses from the existing
-annotated checkpoint:
+## Maintenance Rebuilds
+
+The demo command above is a smoke-test path, not a rebuild of the current
+GSE164378 analysis. The maintained full-data result path has two sequential
+stages:
+
+1. `workflows/Snakefile` creates the full annotated checkpoint and provisional
+   outputs under `results/gse164378_full/`.
+2. `workflows/Snakefile.replicate_corrected` reuses that checkpoint and creates
+   the authoritative replicate-corrected outputs under
+   `results/gse164378_full_replicate_corrected/`.
+
+Run the following from the repository root in an activated
+`immune-aging-scvi` environment. Keep `-c 1` for the conservative memory-safe
+route, do not run the two Snakemake commands concurrently, and ensure Docker
+Desktop is available for the pinned edgeR stages.
+
 ```powershell
-python -m snakemake -s workflows/Snakefile.replicate_corrected -c 1 --configfile config/config.real.full.replicate_corrected.yml
+$requiredInputs = @(
+    "data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad",
+    "data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv"
+)
+
+foreach ($path in $requiredInputs) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Required input not found: $path"
+    }
+}
+
+docker --context desktop-linux image inspect `
+    immune-aging-edger:bioc-3.23-edger-4.10.1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "The pinned edgeR Docker image is unavailable."
+}
+
+$logDir = "results/logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$logPath = Join-Path $logDir (
+    "maintenance_rebuild_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss")
+)
+
+Start-Transcript -Path $logPath
+try {
+    python -m snakemake `
+        -s workflows/Snakefile `
+        -c 1 `
+        --configfile config/config.real.full.yml `
+        --rerun-incomplete `
+        --printshellcmds
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "The full-data workflow failed; do not run the corrected stage."
+    }
+
+    python -m snakemake `
+        -s workflows/Snakefile.replicate_corrected `
+        -c 1 `
+        all pseudobulk_robustness_evidence `
+        --configfile config/config.real.full.replicate_corrected.yml `
+        --rerun-incomplete `
+        --printshellcmds
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "The replicate-corrected workflow failed."
+    }
+}
+finally {
+    Stop-Transcript
+}
 ```
+
+The explicit `pseudobulk_robustness_evidence` target extends the corrected
+workflow's default `all` target through pseudobulk aggregation, edgeR modeling,
+technical validation, sensitivity models, and bounded evidence preparation.
+Snakemake normally reruns only incomplete or out-of-date jobs. Add `--forceall`
+to both commands only for a deliberate complete recomputation, including scVI
+training and annotation.
+
+If `results/gse164378_full/06_annotated.h5ad` remains a validated immutable
+checkpoint, run only the second Snakemake command to regenerate downstream
+replicate-corrected results. After either route, inspect validation reports and
+`git diff -- docs`; do not publish regenerated reports or claims without the
+required scientific review.
 
 ## Validation
 Use the project conda environment before running workflow checks. The tracked
