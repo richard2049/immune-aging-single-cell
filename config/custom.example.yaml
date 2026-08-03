@@ -1,40 +1,43 @@
-cfg_path: config/config.demo.yaml
+cfg_path: config/custom.example.yaml
 
 project:
   name: immune_aging_scvi
-  out_dir: results
+  out_dir: results/custom
 
 run:
-  # demo_pbmc3k (small) or custom_h5ad (real data you place in data/raw)
-  dataset: demo_pbmc3k
+  dataset: custom_h5ad
+  # Set an explicit cap only for a documented pilot analysis.
+  max_cells: null
   seed: 42
 
 paths:
-  # used when dataset=custom_h5ad
   input_h5ad: data/raw/input.h5ad
 
 metadata:
+  # When disabled, required fields must already exist in adata.obs.
   enabled: false
   require_all_matches: true
   parse_obs_names: false
   table_path: null
   table_sep: ","
-  obs_join_key: donor_id
-  table_join_key: donor_id
+  obs_join_key: cell_id
+  table_join_key: cell_id
   table_columns: []
+  auto_standardize_columns: false
+  rename_columns: {}
   sample_field: sample_id
-  donor_field: donor_id
+  donor_field: biological_replicate_id
   batch_field: batch
   barcode_field: cell_barcode
   sample_delim: auto
   donor_index: 1
 
 qc:
+  enabled: true
   min_genes_per_cell: 200
   min_cells_per_gene: 3
   n_genes_upper_quantile: 0.98
   max_pct_counts_mt: 20
-  # ribo detection will use gene name prefixes by default (RPL/RPS)
   max_pct_counts_ribo: 50
 
 doublets:
@@ -49,8 +52,6 @@ scvi:
   categorical_covariates: []
   continuous_covariates: ["pct_counts_mt", "total_counts", "pct_counts_ribo"]
   allow_missing_covariates: false
-  # Default matches the portable CPU-only environment.yml.
-  # Use "gpu" only after installing a CUDA-enabled PyTorch build.
   accelerator: cpu
   devices: 1
 
@@ -59,6 +60,7 @@ clustering:
   leiden_resolution: 0.8
 
 celltypist:
+  enabled: true
   model: Immune_All_Low.pkl
   model_source: https://www.celltypist.org/models
   majority_voting: true
@@ -69,19 +71,26 @@ report:
 
 composition_age:
   age_col: age
-  donor_col: donor_id
+  donor_col: biological_replicate_id
   celltype_col: cell_type
+  covariate_cols: []
+  adjust_covariates: false
   min_cells_per_donor: 50
   min_donors_per_celltype: 4
+  drop_sparse_age_bins: true
+  bootstrap_iterations: 1000
+  bootstrap_ci: 0.95
   top_n_celltypes: 8
   top_n_trends: 6
   dpi: 150
 
 signature_age:
   age_col: age
-  donor_col: donor_id
+  donor_col: biological_replicate_id
   celltype_col: cell_type
   sex_col: sex
+  covariate_cols: []
+  adjust_covariates: false
   normalize_target_sum: 10000
   assume_log1p: false
   max_cells_for_scoring: 50000
@@ -89,13 +98,15 @@ signature_age:
   min_cells_per_group: 20
   min_donors_per_celltype: 4
   min_age_span: 8
+  bootstrap_iterations: 1000
+  bootstrap_ci: 0.95
   top_n_panels: 6
   dpi: 150
 
 age_prediction:
   latent_key: X_scVI
   age_col: age
-  donor_col: donor_id
+  donor_col: biological_replicate_id
   celltype_col: cell_type
   max_cells_for_aggregation: 50000
   min_cells_per_group: 20
@@ -109,5 +120,16 @@ age_prediction:
   dpi: 150
 
 analysis:
-  # expects obs column "age" for real aging datasets
   age_bins: [25, 35, 45, 55, 65, 75, 85]
+
+sensitivity_age:
+  enabled: false
+  include_baseline: true
+  adjust_covariates_values: [true, false]
+  drop_sparse_age_bins_values: [true, false]
+  min_cells_per_group_values: [20, 50, 80]
+
+supplementary_age:
+  top_n_composition: 8
+  top_n_signature: 8
+  dpi: 150

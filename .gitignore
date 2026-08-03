@@ -20,6 +20,9 @@ tmp/
 cache/
 .ruff_cache/
 
+# editable local analysis profiles
+config/*.local.yaml
+
 # versioned documentation assets
 !docs/assets/
 docs/assets/*

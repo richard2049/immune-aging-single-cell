@@ -1,4 +1,4 @@
-# Pseudobulk DE Full-Run Technical Acceptance
+# Pseudobulk DE One-Million-Cell Run Technical Acceptance
 
 ## Scope
 
@@ -7,10 +7,14 @@ donor-aware, cell-type-specific pseudobulk differential-expression stage on the
 corrected GSE164378 profile. It does not approve genes, pathways, biological
 interpretations, or public-facing claims.
 
+The source H5AD contains 1,916,367 cells. This record applies only to the
+accepted 1,000,000-cell checkpoint and must not be interpreted as technical
+acceptance of an uncapped source-data run.
+
 ## Execution
 
 - Date: 2026-07-31
-- Configuration: `config/config.real.full.replicate_corrected.yml`
+- Configuration: `config/gse164378_corrected.yaml`
 - Input checkpoint: `results/gse164378_full/06_annotated.h5ad` (read-only)
 - Replicate mapping:
   `results/gse164378_full_replicate_corrected/tables/cell_to_biological_replicate.csv`
@@ -50,7 +54,7 @@ Command:
 
 ```powershell
 python -u -m src.validate_pseudobulk_de `
-  --config config/config.real.full.replicate_corrected.yml `
+  --config config/gse164378_corrected.yaml `
   --outdir results/gse164378_full_replicate_corrected/pseudobulk_de `
   --report results/gse164378_full_replicate_corrected/pseudobulk_de/technical_validation.json
 ```

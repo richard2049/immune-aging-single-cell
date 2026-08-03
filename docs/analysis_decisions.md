@@ -36,7 +36,7 @@ genes, and 107,948 tests. All 13 fitted adjusted designs were full rank and no
 fallback model was used.
 
 Evidence: [analysis design](pseudobulk_de_design.md), [workflow details](pseudobulk_de.md),
-and [full-run acceptance](validation/pseudobulk_de_full_run_acceptance.md).
+and [one-million-cell run acceptance](validation/pseudobulk_de_1m_run_acceptance.md).
 
 ## Corrected-result promotion
 

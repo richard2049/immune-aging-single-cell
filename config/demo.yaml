@@ -1,4 +1,4 @@
-cfg_path: config/config.yaml
+cfg_path: config/demo.yaml
 
 project:
   name: immune_aging_scvi
@@ -34,6 +34,7 @@ qc:
   min_cells_per_gene: 3
   n_genes_upper_quantile: 0.98
   max_pct_counts_mt: 20
+  # ribo detection will use gene name prefixes by default (RPL/RPS)
   max_pct_counts_ribo: 50
 
 doublets:

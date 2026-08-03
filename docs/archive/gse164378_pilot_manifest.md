@@ -30,7 +30,7 @@ It is not a current scientific result set.
 ## Reason For Removal
 
 - The stored 192,317-cell run does not match the current
-  `config/config.real.yml` setting of `max_cells: 50000`, so the exact run is
+  `config/gse164378_pilot.yaml` setting of `max_cells: 50000`, so the exact run is
   not reproducible from the current profile.
 - Donor-level outputs used non-canonical donor labels and predate the validated
   `Tube_id` to `biological_replicate_id` remediation.

@@ -72,4 +72,4 @@ jobs:
 
       - name: Construct the demo workflow DAG
         shell: micromamba-shell {0}
-        run: python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/config.demo.yaml --printshellcmds
+        run: python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/demo.yaml --printshellcmds
