@@ -8,10 +8,10 @@ unit. It does not treat cells or technical libraries as independent
 replicates.
 
 The implementation is technically validated on both a bounded fixture and the
-full GSE164378 corrected-replicate checkpoint. The full gene-level results have
-not yet undergone biological interpretation, so this document defines an
-execution and technical acceptance contract rather than a biological
-conclusion.
+one-million-cell GSE164378 corrected-replicate checkpoint. The complete
+gene-level result set for that checkpoint has not yet undergone biological
+interpretation, so this document defines an execution and technical acceptance
+contract rather than a biological conclusion.
 
 ## Approved Contract
 
@@ -53,7 +53,7 @@ python -m unittest `
   -v
 ```
 
-## Full-Data Target
+## One-Million-Cell Target
 
 The stage is intentionally absent from the default workflow target. Run it
 explicitly:
@@ -62,7 +62,7 @@ explicitly:
 python -m snakemake `
   -s workflows/Snakefile.replicate_corrected `
   -c 1 pseudobulk_de_corrected `
-  --configfile config/config.real.full.replicate_corrected.yml `
+  --configfile config/gse164378_corrected.yaml `
   --printshellcmds
 ```
 
@@ -70,7 +70,7 @@ Validate existing outputs without rerunning aggregation or edgeR:
 
 ```powershell
 python -u -m src.validate_pseudobulk_de `
-  --config config/config.real.full.replicate_corrected.yml `
+  --config config/gse164378_corrected.yaml `
   --outdir results/gse164378_full_replicate_corrected/pseudobulk_de `
   --report results/gse164378_full_replicate_corrected/pseudobulk_de/technical_validation.json
 ```
@@ -103,13 +103,13 @@ These outputs remain analytical results pending review. Pathway enrichment,
 public gene-level figures, and biological claims require a separate human
 scientific interpretation review.
 
-## Full-Data Execution Status
+## One-Million-Cell Execution Status
 
-The full corrected-profile run completed on 2026-07-31. It produced 2,944
+The corrected one-million-cell run completed on 2026-07-31. It produced 2,944
 pseudobulk profiles from 317 biological replicates and 107,948 tests across 13
 cell types. All populations used the approved adjusted model, and the technical
 validator passed. See
-`docs/validation/pseudobulk_de_full_run_acceptance.md` for the acceptance record
+`docs/validation/pseudobulk_de_1m_run_acceptance.md` for the acceptance record
 and remaining manual review requirements.
 
 ## Robustness Audit And Evidence Preparation
@@ -119,7 +119,7 @@ primary result table. It evaluates a higher profile-cell floor,
 covariate-omission diagnostics, and leave-one-batch-out models. These models do
 not replace the adjusted primary analysis and are not independent replications.
 
-The full audit completed on 2026-08-02. It preserved 7,970 global-FDR
+The predefined audit completed on 2026-08-02. It preserved 7,970 global-FDR
 candidate rows, recorded 212 completed and three explicitly non-estimable
 cell-type-by-scenario models, and produced a bounded 249-row manual-review
 queue. No model failed. See `docs/pseudobulk_robustness_audit.md` for the
@@ -129,7 +129,7 @@ Run the sensitivity models explicitly:
 
 ```powershell
 python -u -m src.run_pseudobulk_robustness `
-  --config config/config.real.full.replicate_corrected.yml `
+  --config config/gse164378_corrected.yaml `
   --matrix results/gse164378_full_replicate_corrected/pseudobulk_de/pseudobulk_counts.mtx.gz `
   --profiles results/gse164378_full_replicate_corrected/pseudobulk_de/pseudobulk_profiles.csv `
   --genes results/gse164378_full_replicate_corrected/pseudobulk_de/pseudobulk_genes.csv `
@@ -144,7 +144,7 @@ After recording the diagnostic-plot review, prepare the evidence tables:
 
 ```powershell
 python -m src.prepare_pseudobulk_evidence `
-  --config config/config.real.full.replicate_corrected.yml `
+  --config config/gse164378_corrected.yaml `
   --pseudobulk-dir results/gse164378_full_replicate_corrected/pseudobulk_de `
   --report-out docs/pseudobulk_robustness_audit.md
 ```

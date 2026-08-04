@@ -7,6 +7,7 @@ without relying on generated result directories.
 ## Running the workflow
 
 - [Project overview and quickstart](../README.md)
+- [Configuration profiles](configuration.md)
 - [Real-data ingestion and metadata](real_data.md)
 - [Troubleshooting](troubleshooting.md)
 
@@ -22,7 +23,7 @@ without relying on generated result directories.
 - [Corrected-results review](corrected_results_review.md)
 - [Pseudobulk robustness audit](pseudobulk_robustness_audit.md)
 - [edgeR runtime qualification](validation/pseudobulk_de_runtime_qualification.md)
-- [Full-run pseudobulk acceptance](validation/pseudobulk_de_full_run_acceptance.md)
+- [One-million-cell pseudobulk acceptance](validation/pseudobulk_de_1m_run_acceptance.md)
 - [Repository readiness audit](validation/repository_readiness_audit.md)
 - [Corrected-result dispositions](reviews/corrected_results_dispositions.yml)
 - [Pseudobulk diagnostic review](reviews/pseudobulk_diagnostic_plot_review.yml)

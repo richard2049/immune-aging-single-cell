@@ -5,14 +5,14 @@
 Feasibility audit, biological-replicate remediation, analysis-contract
 approval, and bounded runtime qualification are complete. The donor-aware
 pseudobulk implementation is available as a targeted corrected-profile stage.
-The full GSE164378 pseudobulk analysis and automated technical validation are
-complete. Biological interpretation remains pending.
+The one-million-cell GSE164378 pseudobulk analysis and automated technical
+validation are complete. Biological interpretation remains pending.
 
 ## Audit Scope
 
 The audit used:
 
-- profile: `config/config.real.full.yml`;
+- profile: `config/gse164378_1m.yaml`;
 - checkpoint: `results/gse164378_full/06_annotated.h5ad`;
 - source cell metadata:
   `data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv`;
@@ -20,7 +20,7 @@ The audit used:
 
 ```powershell
 python -u -m src.pseudobulk_de_feasibility `
-  --config config/config.real.full.yml `
+  --config config/gse164378_1m.yaml `
   --inp results/gse164378_full/06_annotated.h5ad `
   --outdir results/gse164378_full/pseudobulk_de_feasibility
 ```
@@ -130,7 +130,7 @@ Before implementing DE:
 5. Add and validate the selected count-model runtime (completed).
 6. Implement pseudobulk aggregation and DE only after the revised design is
    approved (completed).
-7. Execute the full corrected-profile target and review technical diagnostics
+7. Execute the complete corrected-profile target and review technical diagnostics
    before any biological interpretation (automated acceptance completed;
    manual diagnostic-plot review and biological interpretation pending).
 
@@ -143,7 +143,7 @@ Under `results/gse164378_full/pseudobulk_de_feasibility/`:
 - `replicate_metadata_audit.csv`
 - `replicate_celltype_support.csv`
 
-The implemented full-data stage writes under
+The implemented one-million-cell stage writes under
 `results/gse164378_full_replicate_corrected/pseudobulk_de/`. Its output
 contract and targeted commands are documented in `docs/pseudobulk_de.md`.
 - `celltype_support_summary.csv`

@@ -1,18 +1,15 @@
-cfg_path: config/config.real.full.yml
+cfg_path: config/gse164378_1m.yaml
 
 project:
   name: immune_aging_scvi
-  # 25k  -> results/gse164378_25k
-  # 100k -> results/gse164378_100k
-  # full -> results/gse164378_full
+  # Fixed one-million-cell GSE164378 profile. Use a local config for variants.
+  # The output path predates the explicit 1M profile name and is retained for
+  # compatibility with the validated checkpoint.
   out_dir: results/gse164378_full
 
 run:
   dataset: custom_h5ad
-  # Controlled scaling:
-  # 25k  -> max_cells: 25000
-  # 100k -> max_cells: 100000
-  # full -> max_cells: null
+  # Reproduces the accepted one-million-cell checkpoint.
   max_cells: 1000000
   seed: 42
 
@@ -39,9 +36,7 @@ metadata:
   donor_index: 1
 
 qc:
-  # full mode on consumer hardware: skip QC step to avoid loading all X in RAM.
-  # 25k/100k: true
-  # full: false
+  # Skip QC here to avoid loading the complete count matrix into memory.
   enabled: false
   min_genes_per_cell: 800
   min_cells_per_gene: 3
@@ -50,9 +45,7 @@ qc:
   max_pct_counts_ribo: 50
 
 doublets:
-  # Recommendation:
-  # 25k/100k -> false
-  # full     -> keep false initially, enable only if resources allow
+  # Disabled in the accepted one-million-cell execution contract.
   enabled: false
   dif_threshold: 0.5
   hvg_top: 2000
@@ -60,9 +53,7 @@ doublets:
   hvg_flavor: seurat_v3
 
 scvi:
-  # Use X directly in full mode to avoid duplicating counts layer in memory.
-  # 25k/100k: counts
-  # full: null
+  # Use X directly to avoid duplicating the one-million-cell counts in memory.
   layer: null
   # Metadata integration creates canonical `batch` (prefer table batch, fallback parsed batch).
   categorical_covariates: ["batch"]
@@ -70,7 +61,7 @@ scvi:
   continuous_covariates: []
   allow_missing_covariates: false
   # Default matches the portable CPU-only environment.yml.
-  # For full-scale execution, GPU is usually faster but should be enabled only
+  # For this scale, GPU is usually faster but should be enabled only
   # after installing and validating a CUDA-enabled PyTorch build.
   accelerator: cpu
   devices: 1
@@ -80,15 +71,10 @@ clustering:
   leiden_resolution: 0.8
 
 celltypist:
-  # For full mode, enable only after confirming available RAM.
   enabled: true
   model: Immune_All_Low.pkl
   model_source: https://www.celltypist.org/models
   majority_voting: false
-  # Stage recommendations:
-  # 25k  -> 2000
-  # 100k -> 5000
-  # full -> 10000 (if RAM allows)
   chunk_size: 10000
   normalize_target_sum: 10000
 

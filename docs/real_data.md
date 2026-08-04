@@ -17,23 +17,37 @@ This project expects a pre-standardized `.h5ad` for real runs.
   - `condition` (optional)
 
 ## Configure Real Mode
-Edit `config/config.real.yml`:
+Do not edit a tracked GSE164378 study profile. Copy the generic example to an
+ignored local profile:
+
+```powershell
+Copy-Item config/custom.example.yaml config/custom.local.yaml
+```
+
+In `config/custom.local.yaml`, first set:
+- `cfg_path: config/custom.local.yaml`
 - `run.dataset: custom_h5ad`
 - `paths.input_h5ad: data/raw/input.h5ad`
+- a distinct `project.out_dir`
+
+Then review:
 - `metadata.enabled: true` to run `src/metadata_integrate.py`
 - `metadata.parse_obs_names: true` only when its tokenization has been validated;
   parsed labels do not establish the biological replicate
 - `metadata.table_path: ...` (optional) to merge donor-level metadata such as `age`, `sex`, `condition`
 - `scvi.categorical_covariates`: include available batch-like columns (for example: `["batch", "donor_id"]`)
 
+The profile roles and inheritance contract are described in
+[`docs/configuration.md`](configuration.md).
+
 Run:
 ```bash
-snakemake -s workflows/Snakefile -c 1 --configfile config/config.real.yml
+snakemake -s workflows/Snakefile -c 1 --configfile config/custom.local.yaml
 ```
 
 PowerShell:
 ```powershell
-python -m snakemake -s workflows/Snakefile -c 1 --configfile config/config.real.yml
+python -m snakemake -s workflows/Snakefile -c 1 --configfile config/custom.local.yaml
 ```
 
 ## Standardization Checklist

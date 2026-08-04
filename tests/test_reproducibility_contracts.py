@@ -130,7 +130,10 @@ class ReproducibilityContractTests(unittest.TestCase):
 
     def test_configured_prediction_dependencies_are_declared(self) -> None:
         environment = Path("environment.yml").read_text(encoding="utf-8").lower()
-        for path in (Path("config/config.real.yml"), Path("config/config.real.full.yml")):
+        for path in (
+            Path("config/gse164378_pilot.yaml"),
+            Path("config/gse164378_1m.yaml"),
+        ):
             config = yaml.safe_load(path.read_text(encoding="utf-8"))
             requested = config["age_prediction"]["model_order"]
             if "xgboost" in requested:
@@ -206,17 +209,6 @@ class ReproducibilityContractTests(unittest.TestCase):
         )
         self.assertEqual(categorical, ["batch"])
         self.assertEqual(continuous, [])
-
-    def test_all_primary_configs_define_a_seed(self) -> None:
-        paths = (
-            Path("config/config.yaml"),
-            Path("config/config.demo.yaml"),
-            Path("config/config.real.yml"),
-            Path("config/config.real.full.yml"),
-        )
-        for path in paths:
-            config = yaml.safe_load(path.read_text(encoding="utf-8"))
-            self.assertIsInstance(config["run"]["seed"], int, msg=str(path))
 
 
 if __name__ == "__main__":

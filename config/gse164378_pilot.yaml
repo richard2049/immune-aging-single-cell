@@ -1,14 +1,13 @@
-cfg_path: config/config.real.yml
+cfg_path: config/gse164378_pilot.yaml
 
 project:
   name: immune_aging_scvi
+  # Fixed, bounded GSE164378 smoke profile. Use a local config for variants.
   out_dir: results/gse164378_pilot
-  # out_dir: results/gse164378_full
 
 run:
   dataset: custom_h5ad
-  # Pilot mode for very large datasets: ingest randomly samples this many cells.
-  # Remove or set null for full-size runs.
+  # Ingest uses a reproducible random subset for this pilot profile.
   max_cells: 50000
   seed: 42
 

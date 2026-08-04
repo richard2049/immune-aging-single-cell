@@ -20,7 +20,7 @@ The audit evaluated the public Git tree, documentation, environment contract,
 workflow entry points, automated tests, CI configuration, scientific review
 boundaries, citation and license metadata, and the documented maintenance
 route. It did not rerun the one-million-cell analysis, retrain scVI, or repeat
-the full edgeR and robustness workloads. Those expensive stages retain their
+the complete edgeR and robustness workloads. Those expensive stages retain their
 existing technical acceptance evidence and remain available through the
 documented maintenance commands.
 
@@ -32,14 +32,14 @@ documented maintenance commands.
 | Public repository metadata | Pass | Repository is public, uses `main`, exposes a clear scientific description, and GitHub detects the BSD 3-Clause license. |
 | Repository hygiene | Pass | No raw data, generated `results/`, environments, caches, Snakemake state, private working records, credentials, or absolute local paths were found in the tracked tree. |
 | Citation and release | Pass | `CITATION.cff` parses with version `0.1.0`, BSD-3-Clause, author metadata, and ORCID. Release `v0.1.0` remains the Phase 1 checkpoint. |
-| Documentation | Pass | Sixteen tracked Markdown files, including this report, had valid relative links. The README now distinguishes demo execution, incremental maintenance, full reconstruction, and checkpoint-based corrected regeneration. |
+| Documentation | Pass | Sixteen tracked Markdown files, including this report, had valid relative links. The README now distinguishes demo execution, incremental maintenance, one-million-cell reconstruction, and checkpoint-based corrected regeneration. |
 | Runtime environment | Pass with residual risk | `environment.yml` is version-constrained and was created successfully on GitHub-hosted Linux. It is not a platform lockfile, so future dependency resolution can still vary within allowed patch versions. |
 | Automated verification | Pass | [PR CI run 30819119516](https://github.com/richard2049/immune-aging-single-cell/actions/runs/30819119516) and [main CI run 30819522816](https://github.com/richard2049/immune-aging-single-cell/actions/runs/30819522816) passed Ruff, formatting, compilation, 42 unit tests, and demo-DAG construction. Two Docker tests were skipped by the routine CI contract. |
 | CI security and scope | Pass | Workflow permissions are read-only, actions are pinned by commit SHA, superseded runs are cancelled, and heavy or external qualifications are explicitly excluded from routine CI. |
 | Demo workflow graph | Pass | The 13-rule demo DAG constructs without executing jobs or requiring real data. |
-| Full maintenance route | Pass, not re-executed | The README now runs the full profile first and then explicitly targets both corrected default outputs and `pseudobulk_robustness_evidence`. Full recomputation remains an intentional long-running operation. |
+| One-million-cell maintenance route | Pass, not re-executed | The README runs the one-million-cell profile first and then explicitly targets both corrected default outputs and `pseudobulk_robustness_evidence`. Complete recomputation remains an intentional long-running operation. |
 | Replicate correction | Pass | The corrected workflow uses `Tube_id` as `biological_replicate_id`; its mapping, grouped analyses, validation, and reviewed presentation scope are documented in the [corrected-results review](../corrected_results_review.md). |
-| Pseudobulk implementation | Technically accepted | The donor-aware edgeR run passed its [full-run acceptance contract](pseudobulk_de_full_run_acceptance.md), and the predefined [robustness audit](../pseudobulk_robustness_audit.md) completed without model failures. |
+| Pseudobulk implementation | Technically accepted | The donor-aware edgeR run passed its [one-million-cell acceptance contract](pseudobulk_de_1m_run_acceptance.md), and the predefined [robustness audit](../pseudobulk_robustness_audit.md) completed without model failures. |
 | Gene and pathway interpretation | Open | The bounded pseudobulk queue supports human review but does not approve genes, pathways, or mechanisms. |
 | External validation | Open | Corrected composition, signature, and predictive findings have not been independently replicated in a compatible donor cohort. |
 | Branch policy | Recommendation | `main` is not protected. CI reports status but does not currently prevent direct pushes or merging with failed checks. |
@@ -48,7 +48,7 @@ documented maintenance commands.
 
 The authoritative GSE164378 rebuild is intentionally sequential:
 
-1. Run the full profile to produce
+1. Run the one-million-cell profile to produce
    `results/gse164378_full/06_annotated.h5ad` and provisional outputs.
 2. Run the replicate-corrected workflow with both `all` and
    `pseudobulk_robustness_evidence` as targets.

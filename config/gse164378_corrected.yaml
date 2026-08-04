@@ -1,5 +1,5 @@
-extends: config/config.real.full.yml
-cfg_path: config/config.real.full.replicate_corrected.yml
+extends: gse164378_1m.yaml
+cfg_path: config/gse164378_corrected.yaml
 
 project:
   out_dir: results/gse164378_full_replicate_corrected
@@ -49,7 +49,7 @@ sensitivity_age:
   bootstrap_iterations: 500
 
 pseudobulk_de:
-  # Approved in decision card 001 on 2026-07-30.
+  # The accepted design is documented in docs/pseudobulk_de_design.md.
   count_layer: null
   replicate_col: biological_replicate_id
   celltype_col: cell_type
@@ -89,8 +89,9 @@ pseudobulk_de:
     timeout_seconds: 14400
 
 pseudobulk_robustness:
-  # Approved in decision card 005. These scenarios diagnose robustness and do
-  # not replace the primary adjusted model or approve biological claims.
+  # These scenarios diagnose robustness; they do not replace the primary
+  # adjusted model or approve biological claims. See
+  # docs/pseudobulk_robustness_audit.md.
   candidate_global_fdr_threshold: 0.05
   high_cell_min_cells: 100
   review_candidates_per_direction_per_celltype: 10
