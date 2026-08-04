@@ -24,6 +24,7 @@ without relying on generated result directories.
 - [Pseudobulk robustness audit](pseudobulk_robustness_audit.md)
 - [edgeR runtime qualification](validation/pseudobulk_de_runtime_qualification.md)
 - [One-million-cell pseudobulk acceptance](validation/pseudobulk_de_1m_run_acceptance.md)
+- [Demo workflow end-to-end qualification](validation/demo_end_to_end.md)
 - [Repository readiness audit](validation/repository_readiness_audit.md)
 - [Corrected-result dispositions](reviews/corrected_results_dispositions.yml)
 - [Pseudobulk diagnostic review](reviews/pseudobulk_diagnostic_plot_review.yml)
