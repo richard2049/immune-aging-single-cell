@@ -24,6 +24,19 @@
   exist.
 - Missing values must not be silently imputed. Configured model covariates must
   not be silently removed.
+- Explicitly configured adjustment covariates must be present and complete, and
+  non-estimable nuisance designs must stop inferential analysis rather than
+  trigger an unadjusted fallback.
+
+## Composition
+
+- Eligible biological replicates must be crossed with the observed cell-type
+  universe before fractions are calculated. Absence of a population is a zero
+  count, not a missing replicate.
+- Report total independent replicates separately from replicates with a
+  positive count for the population.
+- Fractions over the complete cell-type grid must sum to one within each
+  eligible biological replicate, subject only to numerical tolerance.
 
 ## Cross-Validation And Prediction
 
@@ -58,6 +71,18 @@
   annotation.
 - Environment changes require a clean environment solve and import smoke test
   before broad workflow execution.
+
+## Checkpoint And Failure Contracts
+
+- Maintained real-data profiles must fail on missing analytical inputs,
+  dependencies, invalid designs, or incomplete provenance. Placeholder outputs
+  are allowed only when a profile opts in explicitly for demo use.
+- Reused checkpoints must record the resolved configuration, source-file
+  identity, required data representations, and stage provenance. A successful
+  prior run does not establish compatibility with current code or config.
+- QC reports must account for stage-wise cell retention and expose metadata and
+  annotation uncertainty by relevant strata without imposing universal
+  biological thresholds.
 
 ## Interpretation
 

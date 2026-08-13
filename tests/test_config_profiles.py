@@ -47,6 +47,13 @@ class ConfigProfileContractTests(unittest.TestCase):
                 self.assertNotIn(out_dir, outputs, msg=f"also used by {outputs.get(out_dir)}")
                 outputs[out_dir] = path
 
+    def test_only_demo_profile_allows_placeholder_outputs(self) -> None:
+        for path in SUPPORTED_PROFILES:
+            with self.subTest(path=path):
+                config = load_config(path)
+                expected = path == Path("config/demo.yaml")
+                self.assertIs(config["run"]["allow_placeholder_outputs"], expected)
+
     def test_gse164378_pilot_is_bounded_and_separate(self) -> None:
         config = load_config("config/gse164378_pilot.yaml")
         self.assertEqual(config["run"]["max_cells"], 50_000)

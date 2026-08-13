@@ -1,5 +1,10 @@
 # Corrected Public-Promotion Record
 
+> [!IMPORTANT]
+> This historical promotion record is not currently active. The underlying
+> checkpoint and affected downstream results are pending requalification under
+> the current scientific safeguards.
+
 ## Status
 
 **Approved source text and captions for corrected public promotion.**

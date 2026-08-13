@@ -9,7 +9,7 @@ edit in place.
 | `config/demo.yaml` | Small fixture run and CI DAG check | `workflows/Snakefile` | `results/` | Fixed demo contract |
 | `config/gse164378_pilot.yaml` | Reproducible 50,000-cell GSE164378 smoke run | `workflows/Snakefile` | `results/gse164378_pilot/` | Fixed study profile |
 | `config/gse164378_1m.yaml` | Accepted 1,000,000-cell GSE164378 run | `workflows/Snakefile` | `results/gse164378_full/` (legacy path) | Fixed study profile |
-| `config/gse164378_corrected.yaml` | Replicate-aware downstream analyses and pseudobulk evidence | `workflows/Snakefile.replicate_corrected` | `results/gse164378_full_replicate_corrected/` | Fixed study profile |
+| `config/gse164378_corrected.yaml` | Checkpoint audit, replicate-aware downstream analyses, and pseudobulk evidence | `workflows/Snakefile.replicate_corrected` | `results/gse164378_full_replicate_corrected/` | Fixed study profile |
 | `config/custom.example.yaml` | Starting point for another standardized H5AD | `workflows/Snakefile` | `results/custom/` | Copy before editing |
 
 ## Custom Data
@@ -51,7 +51,8 @@ inherited values.
   treat its outputs as the maintained one-million-cell results.
 - Use the one-million-cell profile to rebuild the accepted provisional
   GSE164378 checkpoint.
-- Use the corrected profile only with the validated full annotated checkpoint.
+- Use the corrected profile only with an annotated checkpoint that passes its
+  configured scientific audit.
 - Use a local copy of the custom example for any other dataset.
 
 Changing input inclusion, replicate identity, covariates, model formulas, or

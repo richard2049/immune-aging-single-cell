@@ -8,6 +8,7 @@ run:
   # demo_pbmc3k (small) or custom_h5ad (real data you place in data/raw)
   dataset: demo_pbmc3k
   seed: 42
+  allow_placeholder_outputs: true
 
 paths:
   # used when dataset=custom_h5ad

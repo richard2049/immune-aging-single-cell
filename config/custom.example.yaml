@@ -9,6 +9,7 @@ run:
   # Set an explicit cap only for a documented pilot analysis.
   max_cells: null
   seed: 42
+  allow_placeholder_outputs: false
 
 paths:
   input_h5ad: data/raw/input.h5ad

@@ -8,6 +8,18 @@ analysis_checkpoint:
   annotated_h5ad: results/gse164378_full/06_annotated.h5ad
   provisional_out_dir: results/gse164378_full
 
+scientific_audit:
+  annotation_confidence_col: cell_type_confidence
+  stage_h5ads:
+    source_input: data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad
+    selected_cells: results/gse164378_full/01_raw.h5ad
+    metadata_integrated: results/gse164378_full/01_meta.h5ad
+    qc_checkpoint: results/gse164378_full/02_qc.h5ad
+    doublet_checkpoint: results/gse164378_full/03_nodoublets.h5ad
+    scvi_checkpoint: results/gse164378_full/04_scvi.h5ad
+    clustered_checkpoint: results/gse164378_full/05_clustered.h5ad
+    annotated_checkpoint: results/gse164378_full/06_annotated.h5ad
+
 biological_replicates:
   canonical_col: biological_replicate_id
   source_col: tube_id

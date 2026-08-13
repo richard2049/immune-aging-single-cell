@@ -1,5 +1,10 @@
 # Pseudobulk DE One-Million-Cell Run Technical Acceptance
 
+> [!IMPORTANT]
+> This is a historical execution record. Current technical acceptance is
+> suspended until the annotated checkpoint and dependent pseudobulk outputs are
+> regenerated under the current provenance and validation contract.
+
 ## Scope
 
 This record covers execution and technical acceptance of the approved

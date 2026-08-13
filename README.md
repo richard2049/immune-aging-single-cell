@@ -148,9 +148,9 @@ Snakemake normally reruns only incomplete or out-of-date jobs. Add `--forceall`
 to both commands only for a deliberate complete recomputation, including scVI
 training and annotation.
 
-If `results/gse164378_full/06_annotated.h5ad` remains a validated immutable
-checkpoint, run only the second Snakemake command to regenerate downstream
-replicate-corrected results. After either route, inspect validation reports and
+Run only the second Snakemake command when
+`results/gse164378_full/06_annotated.h5ad` has passed the configured scientific
+checkpoint audit. After either route, inspect validation reports and
 `git diff -- docs`; do not publish regenerated reports or claims without the
 required scientific review.
 
@@ -185,77 +185,24 @@ Enable GPU training only after installing a CUDA-enabled PyTorch build and
 validating CUDA locally, then set `scvi.accelerator: gpu` in the config profile
 you are running.
 
-## Replicate-Corrected GSE164378 Results
-Review of the source metadata showed that the original `donor_id` field was
-reused across pools. Donor-level analyses were therefore repeated using
-`Tube_id` as `biological_replicate_id`. The source metadata contained 317
-biological replicates, of which 316 met the requirements for the main
-composition and prediction analyses.
+## GSE164378 Requalification Status
 
-After adjustment for sex and batch, a 10-year difference in age was associated
-with a 1.77 percentage-point lower Tcm/Naive cytotoxic T-cell fraction (95% CI
--1.96 to -1.58; FDR 5.15e-53), a 0.30 percentage-point lower MAIT-cell
-fraction (95% CI -0.38 to -0.23; FDR 2.71e-15), and a 0.76 percentage-point
-higher CD16+ NK-cell fraction (95% CI 0.42 to 1.08; FDR 6.43e-5). These are
-cross-sectional associations between participants, not estimates of
-within-person change or causal effects of aging. Tcm/Naive cytotoxic T cells
-form a combined annotation category rather than a single resolved subtype.
+The one-million-cell workflow and donor-aware pseudobulk implementation remain
+available, but numerical examples and curated result figures are temporarily
+withheld from the main project presentation. A safeguards audit found that the
+historical annotated checkpoint predates the current scVI, clustering, and
+CellTypist provenance records. The composition workflow also now restores
+zero-abundance replicate-cell-type combinations explicitly.
 
-![Selected GSE164378 cell-type composition associations with age](docs/assets/gse164378_corrected_composition_core_trends.png)
+The checkpoint and all affected downstream outputs must therefore be rebuilt,
+technically validated, and reviewed before any association, prediction metric,
+gene, pathway, or figure is presented as a current result. This status does not
+establish that earlier result directions were incorrect; it means that they do
+not yet satisfy the current reproducibility and acceptance contract.
 
-*Cell-type fractions per biological replicate plotted against age for the three
-associations selected for the main figure. Lines are unadjusted linear
-summaries included for visualization; Spearman rho and FDR are from analyses
-adjusted for sex and batch. Tcm/Naive cytotoxic T cells form a combined
-annotation category. The associations are cross-sectional and do not establish
-causality.*
-
-The retained composition results are summarized below on a common
-percentage-point scale. The two filled markers identify the core results shown
-above; open markers indicate secondary retained associations.
-
-![Retained GSE164378 cell-type composition effect estimates](docs/assets/gse164378_corrected_composition_effect_forest.png)
-
-*Sex- and batch-adjusted differences in cell-type fraction per 10-year
-difference in age for all retained composition associations. Points show
-effect estimates in percentage points, and bars show 95% bootstrap confidence
-intervals.*
-
-The scVI-derived features also retained an age-related predictive signal. In
-nested regressor cross-validation grouped by biological replicate, the selected model
-had a donor-level mean absolute error of 12.39 years (95% CI 11.63 to 13.15),
-compared with 15.13 years for a fold-specific mean-age baseline. This is modest
-internal, transductive predictive performance: the `X_scVI` representation was
-learned once from the full cohort before the grouped regressor evaluation. It
-has not been validated end to end in unseen donors, as an aging clock, or as a
-clinical biomarker.
-
-![Internal cross-validated age prediction in GSE164378](docs/assets/gse164378_corrected_age_prediction_internal_cv.png)
-
-*Observed donor age and cross-validated predicted age for the selected model.
-Outer regressor folds were grouped by biological replicate; the upstream scVI
-representation was fitted once on the full cohort. The identity line represents
-perfect prediction, while the fitted line shows the relationship observed in
-the held-out predictions. Reported metrics describe internal cross-validation
-of the regressor and do not establish end-to-end generalization, external
-validity, or clinical utility.*
-
-Several predefined gene-set scores were associated with age, but these results
-remain exploratory. Signature scores are proxies for the configured gene sets
-and do not directly measure pathway activation or suppression.
-
-The donor-aware, cell-type-specific pseudobulk differential-expression module
-is implemented as a targeted corrected-profile stage. Its approved contract
-uses summed raw counts, continuous age, replicate-level inference, and a
-version-checked `edgeR` quasi-likelihood model. The container runtime has
-passed a bounded synthetic qualification test. The full corrected-replicate
-GSE164378 run and automated technical validation are complete, but the
-gene-level results have not yet undergone biological interpretation. A
-pre-specified robustness audit completed 212 sensitivity models, recorded
-three non-estimable scenarios explicitly, and produced a bounded 249-row queue
-for later human review. It did not approve genes or pathways, and no gene-level
-claims are currently presented. See `docs/pseudobulk_de.md`,
-`docs/pseudobulk_de_design.md`, and `docs/pseudobulk_robustness_audit.md`.
+The accepted biological replicate remains source `Tube_id`, exposed as
+`biological_replicate_id`. Gene-level pseudobulk interpretation remains pending
+and no gene- or pathway-level claim is approved.
 
 ## Report Outputs
 Generated by `src/report.py`:

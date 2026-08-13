@@ -18,6 +18,13 @@ from .plot_style import (
     save_placeholder,
     style_axis,
 )
+from .scientific_guardrails import (
+    build_complete_nuisance_design,
+    require_placeholder_permission,
+    residualize_complete,
+    resolve_covariates,
+    validate_replicate_covariates,
+)
 from .utils import ensure_dir, load_config
 
 
@@ -112,54 +119,12 @@ def _mode_or_na(values: pd.Series) -> str:
 
 def _resolve_covariate_cols(columns: list[str], cfg: dict) -> list[str]:
     ccfg = cfg.get("composition_age", {})
-    requested = ccfg.get("covariate_cols")
-    if isinstance(requested, list) and requested:
-        candidates = [str(c) for c in requested]
-    else:
-        candidates = ["sex", "batch"]
-    cols = set(columns)
-    return [c for c in candidates if c in cols]
-
-
-def _build_covariate_design(df: pd.DataFrame) -> np.ndarray | None:
-    if df.empty:
-        return None
-
-    mats: list[np.ndarray] = []
-    for col in df.columns:
-        s = df[col]
-        num = pd.to_numeric(s, errors="coerce")
-        numeric_ratio = float(num.notna().mean())
-        if numeric_ratio > 0.95:
-            if num.notna().any():
-                fill = float(num.median(skipna=True))
-            else:
-                fill = 0.0
-            arr = num.fillna(fill).to_numpy(dtype=float).reshape(-1, 1)
-            mats.append(arr)
-            continue
-
-        cat = s.astype(str).fillna("NA")
-        dummies = pd.get_dummies(cat, prefix=str(col), drop_first=True)
-        if dummies.shape[1] > 0:
-            mats.append(dummies.to_numpy(dtype=float))
-
-    if not mats:
-        return None
-    x = np.concatenate(mats, axis=1)
-    intercept = np.ones((x.shape[0], 1), dtype=float)
-    return np.concatenate([intercept, x], axis=1)
-
-
-def _residualize_vector(y: np.ndarray, x: np.ndarray | None) -> np.ndarray:
-    y = np.asarray(y, dtype=float)
-    if x is None or x.shape[0] != y.shape[0] or x.shape[1] == 0:
-        return y - float(np.mean(y))
-    beta, *_ = np.linalg.lstsq(x, y, rcond=None)
-    res = y - x @ beta
-    if not np.isfinite(res).all() or float(np.std(res)) == 0.0:
-        return y - float(np.mean(y))
-    return res
+    return resolve_covariates(
+        columns,
+        ccfg,
+        section_name="composition_age",
+        defaults=("sex", "batch"),
+    )
 
 
 def _prepare_xy_for_stats(
@@ -172,11 +137,10 @@ def _prepare_xy_for_stats(
     if not adjust_covariates or not covariate_cols:
         return x, y, False
 
-    design = _build_covariate_design(g[covariate_cols].copy())
-    if design is None:
-        return x, y, False
-    x_res = _residualize_vector(x, design)
-    y_res = _residualize_vector(y, design)
+    context = f"composition trend for {g['cell_type'].iloc[0]!r}"
+    design = build_complete_nuisance_design(g[covariate_cols].copy(), context=context)
+    x_res = residualize_complete(x, design, label="age", context=context)
+    y_res = residualize_complete(y, design, label="cell-type fraction", context=context)
     return x_res, y_res, True
 
 
@@ -224,9 +188,18 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
     out = obs[keep_cols].copy()
     out = out.rename(columns={age_col: "age", donor_col: "donor_id", celltype_col: "cell_type"})
     out["age"] = pd.to_numeric(out["age"], errors="coerce")
+    for column in ("donor_id", "cell_type"):
+        out[column] = out[column].astype("string").str.strip()
+        out[column] = out[column].mask(out[column].eq(""))
+    out = out.dropna(subset=["age", "donor_id", "cell_type"])
     out["donor_id"] = out["donor_id"].astype(str)
     out["cell_type"] = out["cell_type"].astype(str)
-    out = out.dropna(subset=["age", "donor_id", "cell_type"])
+    validate_replicate_covariates(
+        out,
+        replicate_col="donor_id",
+        covariate_cols=covariate_cols,
+        context="composition_age",
+    )
     return out, required
 
 
@@ -249,11 +222,22 @@ def _build_donor_fraction_table(
         )
 
     kept = obs[obs["donor_id"].isin(totals["donor_id"])]
-    counts = (
-        kept.groupby(["donor_id", "cell_type"], observed=False).size().reset_index(name="n_cells")
+    observed_counts = (
+        kept.groupby(["donor_id", "cell_type"], observed=False).size().rename("n_cells")
     )
-    out = counts.merge(totals, on="donor_id", how="left")
+    complete_index = pd.MultiIndex.from_product(
+        [
+            totals["donor_id"].astype(str).tolist(),
+            sorted(kept["cell_type"].astype(str).unique().tolist()),
+        ],
+        names=["donor_id", "cell_type"],
+    )
+    counts = observed_counts.reindex(complete_index, fill_value=0).reset_index()
+    out = counts.merge(totals, on="donor_id", how="left", validate="many_to_one")
     out["fraction"] = out["n_cells"] / out["total_cells"]
+    fraction_sums = out.groupby("donor_id", observed=False)["fraction"].sum()
+    if not np.allclose(fraction_sums.to_numpy(dtype=float), 1.0, atol=1e-12):
+        raise RuntimeError("Donor-level cell-type fractions do not sum to one.")
     keep = (
         ["donor_id", "age"]
         + [c for c in covariate_cols if c in out.columns]
@@ -274,7 +258,9 @@ def _compute_trends(
     rows: list[dict] = []
     adjusted_for = ",".join(covariate_cols) if (adjust_covariates and covariate_cols) else ""
     for i, (ct, g) in enumerate(donor_fraction.groupby("cell_type", observed=False)):
-        if len(g) < min_donors_per_celltype:
+        n_donors = int(g["donor_id"].nunique())
+        n_donors_detected = int(g.loc[g["n_cells"].gt(0), "donor_id"].nunique())
+        if n_donors_detected < min_donors_per_celltype:
             continue
         x, y, used_adjustment = _prepare_xy_for_stats(
             g, covariate_cols=covariate_cols, adjust_covariates=adjust_covariates
@@ -293,7 +279,8 @@ def _compute_trends(
         rows.append(
             {
                 "cell_type": ct,
-                "n_donors": int(len(g)),
+                "n_donors": n_donors,
+                "n_donors_detected": n_donors_detected,
                 "mean_fraction": float(g["fraction"].mean()),
                 "spearman_rho": float(rho),
                 "spearman_pvalue": float(p),
@@ -321,6 +308,7 @@ def _compute_trends(
             columns=[
                 "cell_type",
                 "n_donors",
+                "n_donors_detected",
                 "mean_fraction",
                 "spearman_rho",
                 "spearman_pvalue",
@@ -482,14 +470,14 @@ def _plot_top_trends(
     if significant_only:
         candidates = candidates[candidates["fdr_significant"]].copy()
     if min_donors_for_panel > 0:
-        candidates = candidates[candidates["n_donors"] >= int(min_donors_for_panel)].copy()
+        candidates = candidates[candidates["n_donors_detected"] >= int(min_donors_for_panel)].copy()
 
     if candidates.empty:
         filters = []
         if significant_only:
             filters.append("FDR<0.05")
         if min_donors_for_panel > 0:
-            filters.append(f"n_donors>={min_donors_for_panel}")
+            filters.append(f"n_detected>={min_donors_for_panel}")
         suffix = f" ({', '.join(filters)})" if filters else ""
         _save_placeholder(
             path, "Top Cell-type Age Trends", f"No trends satisfy panel filters{suffix}.", dpi
@@ -522,7 +510,8 @@ def _plot_top_trends(
             adjusted_note = f", adj={adjusted_for}" if adjusted_for else ", adj"
         ax.set_title(
             f"{ct}\nrho={stat['spearman_rho']:.2f}, FDR={stat['spearman_fdr']:.2e}, "
-            f"n={int(stat['n_donors'])}{adjusted_note}"
+            f"n={int(stat['n_donors'])}, detected={int(stat['n_donors_detected'])}"
+            f"{adjusted_note}"
         )
         ax.set_xlabel("Age")
         ax.set_ylabel("Donor-level fraction (%)")
@@ -587,6 +576,10 @@ def main() -> None:
         flush=True,
     )
     if obs.empty:
+        require_placeholder_permission(
+            cfg,
+            "Composition analysis cannot run because required observations are unavailable.",
+        )
         pd.DataFrame(
             columns=["donor_id", "age", "cell_type", "n_cells", "total_cells", "fraction"]
         ).to_csv(
@@ -597,6 +590,7 @@ def main() -> None:
             columns=[
                 "cell_type",
                 "n_donors",
+                "n_donors_detected",
                 "mean_fraction",
                 "spearman_rho",
                 "spearman_pvalue",
