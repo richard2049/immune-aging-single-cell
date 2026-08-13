@@ -1,5 +1,11 @@
 # Pseudobulk Robustness Audit And Evidence Preparation
 
+> [!IMPORTANT]
+> This audit applies to historical outputs whose annotated checkpoint is now
+> pending provenance-complete requalification. Its gene-review queue must not be
+> interpreted or promoted until pseudobulk outputs are regenerated and the
+> technical audit is repeated.
+
 ## Scope
 
 This stage evaluates technical and statistical stability of the frozen

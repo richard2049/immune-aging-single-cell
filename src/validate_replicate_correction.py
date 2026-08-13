@@ -35,6 +35,23 @@ def _check_grouping_provenance(
 
 def validate(out_dir: Path) -> dict[str, Any]:
     tables = out_dir / "tables"
+    with (out_dir / "validation" / "scientific_checkpoint_audit.json").open(
+        "r", encoding="utf-8"
+    ) as handle:
+        scientific_audit = json.load(handle)
+    if not bool(scientific_audit.get("passed")):
+        raise ValueError("Scientific checkpoint audit did not pass.")
+    for key in (
+        "config",
+        "checkpoint",
+        "replicate_source_metadata",
+        "replicate_mapping",
+        "implementation",
+        "checks",
+    ):
+        if key not in scientific_audit:
+            raise KeyError(f"Scientific checkpoint audit lacks {key!r}.")
+
     with (tables / "biological_replicate_audit.json").open(
         "r",
         encoding="utf-8",
@@ -77,10 +94,45 @@ def validate(out_dir: Path) -> dict[str, Any]:
             "biological_replicate_id",
         )
 
-    donor_fractions = pd.read_csv(
-        tables / "age_celltype_fraction_by_donor.csv",
-        usecols=["biological_replicate_id"],
+    donor_fractions = pd.read_csv(tables / "age_celltype_fraction_by_donor.csv")
+    fraction_columns = {
+        "biological_replicate_id",
+        "cell_type",
+        "n_cells",
+        "total_cells",
+        "fraction",
+    }
+    _require_columns(donor_fractions, fraction_columns, "donor fractions")
+    if donor_fractions.empty:
+        raise ValueError("Donor fractions are empty.")
+    if donor_fractions.duplicated(["biological_replicate_id", "cell_type"]).any():
+        raise ValueError("Donor fractions contain duplicate replicate-cell-type rows.")
+    expected_rows = int(
+        donor_fractions["biological_replicate_id"].nunique()
+        * donor_fractions["cell_type"].nunique()
     )
+    if len(donor_fractions) != expected_rows:
+        raise ValueError("Donor fractions do not contain the complete replicate-by-cell-type grid.")
+    if donor_fractions["n_cells"].lt(0).any():
+        raise ValueError("Donor fractions contain negative cell counts.")
+    fraction_sums = donor_fractions.groupby("biological_replicate_id", observed=True)[
+        "fraction"
+    ].sum()
+    if not fraction_sums.map(lambda value: abs(float(value) - 1.0) <= 1e-10).all():
+        raise ValueError("Cell-type fractions do not sum to one per replicate.")
+    count_sums = donor_fractions.groupby("biological_replicate_id", observed=True)["n_cells"].sum()
+    total_cells = donor_fractions.groupby("biological_replicate_id", observed=True)[
+        "total_cells"
+    ].first()
+    if not count_sums.equals(total_cells.astype(count_sums.dtype)):
+        raise ValueError("Cell counts do not reconcile with replicate totals.")
+    _require_columns(
+        composition,
+        {"n_donors", "n_donors_detected"},
+        "composition trends",
+    )
+    if composition["n_donors_detected"].gt(composition["n_donors"]).any():
+        raise ValueError("Detected-replicate support exceeds tested support.")
     signature_scores = pd.read_csv(
         tables / "signature_scores_by_donor_celltype.csv",
         usecols=["biological_replicate_id"],
@@ -152,9 +204,12 @@ def validate(out_dir: Path) -> dict[str, Any]:
         "passed": True,
         "scope": "technical validation; no biological interpretation",
         "checkpoint_strategy": (
-            "read-only reuse of the existing annotated H5AD; no remediated "
-            "expression checkpoint was written"
+            "read-only use of a provenance-qualified annotated H5AD; the "
+            "replicate-corrected workflow does not modify expression values"
         ),
+        "scientific_checkpoint_audit_passed": True,
+        "composition_grid_rows": int(len(donor_fractions)),
+        "composition_structural_zero_rows": int(donor_fractions["n_cells"].eq(0).sum()),
         "mapped_cells": int(len(mapping)),
         "unique_biological_replicates": int(mapping["biological_replicate_id"].nunique()),
         "composition_tests": int(len(composition)),

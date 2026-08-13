@@ -73,3 +73,7 @@ jobs:
       - name: Construct the demo workflow DAG
         shell: micromamba-shell {0}
         run: python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/demo.yaml --printshellcmds
+
+      - name: Parse the replicate-corrected workflow
+        shell: micromamba-shell {0}
+        run: python -m snakemake -s workflows/Snakefile.replicate_corrected --configfile config/gse164378_corrected.yaml --list

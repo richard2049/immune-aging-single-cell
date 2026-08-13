@@ -18,6 +18,7 @@ from .plot_style import (
     save_placeholder,
     style_axis,
 )
+from .scientific_guardrails import require_placeholder_permission
 from .utils import ensure_dir, load_config
 
 SUMMARY_COLUMNS = [
@@ -1465,6 +1466,7 @@ def main() -> None:
     try:
         import sklearn  # noqa: F401
     except ImportError:
+        require_placeholder_permission(cfg, "Age prediction requires scikit-learn.")
         _write_empty_outputs(
             fig_pred=fig_pred,
             fig_mae=fig_mae,
@@ -1478,6 +1480,9 @@ def main() -> None:
 
     agg, latent_cols, err = _prepare_aggregated_table(args.inp, cfg)
     if agg.empty:
+        require_placeholder_permission(
+            cfg, err or "Age prediction has no aggregated replicate-cell-type rows."
+        )
         _write_empty_outputs(
             fig_pred=fig_pred,
             fig_mae=fig_mae,
@@ -1502,6 +1507,9 @@ def main() -> None:
         print(
             f"[age_prediction] grouped CV failed: {type(exc).__name__}: {exc}",
             flush=True,
+        )
+        require_placeholder_permission(
+            cfg, f"Age-prediction grouped cross-validation failed: {exc}"
         )
         _write_empty_outputs(
             fig_pred=fig_pred,

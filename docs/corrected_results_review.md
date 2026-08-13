@@ -1,5 +1,11 @@
 # Corrected Results Review
 
+> [!IMPORTANT]
+> This record describes a historical review. Its public authorization is
+> suspended while the annotated checkpoint and structural-zero composition
+> analysis are rebuilt under the current verification contract. Results require
+> renewed validation and human review before promotion.
+
 ## Review Status
 
 **Corrected public wording and assets approved.**

@@ -10,6 +10,7 @@ run:
   # Ingest uses a reproducible random subset for this pilot profile.
   max_cells: 50000
   seed: 42
+  allow_placeholder_outputs: false
 
 paths:
   input_h5ad: data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad

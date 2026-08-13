@@ -5,11 +5,17 @@ PROVISIONAL = config["analysis_checkpoint"]["provisional_out_dir"]
 MAPPING = f"{OUT}/tables/cell_to_biological_replicate.csv"
 PSEUDOBULK = f"{OUT}/pseudobulk_de"
 PSEUDOBULK_ROBUSTNESS = f"{PSEUDOBULK}/robustness"
+SCIENTIFIC_AUDIT = f"{OUT}/validation/scientific_checkpoint_audit.json"
+AUDIT_STAGES = list(config["scientific_audit"]["stage_h5ads"].values())
+REPLICATE_SOURCE = config["biological_replicates"]["source_table_path"]
 
 
 rule all:
     input:
         f"{OUT}/tables/biological_replicate_audit.json",
+        SCIENTIFIC_AUDIT,
+        f"{OUT}/validation/cell_retention.csv",
+        f"{OUT}/validation/annotation_confidence.csv",
         f"{OUT}/figures/age_celltype_composition_by_bin.png",
         f"{OUT}/figures/age_celltype_top_trends.png",
         f"{OUT}/tables/age_celltype_fraction_by_donor.csv",
@@ -45,7 +51,8 @@ rule all:
 
 rule biological_replicate_mapping:
     input:
-        CHECKPOINT
+        h5ad=CHECKPOINT,
+        source=REPLICATE_SOURCE
     output:
         mapping=MAPPING,
         metadata=f"{OUT}/tables/biological_replicate_metadata.csv",
@@ -53,16 +60,36 @@ rule biological_replicate_mapping:
     shell:
         (
             "python -m src.biological_replicates --config {CFG} "
-            "--inp {input} --mapping-out {output.mapping} "
+            "--inp {input.h5ad} --mapping-out {output.mapping} "
             "--replicate-metadata-out {output.metadata} "
             "--audit-out {output.audit}"
+        )
+
+
+rule audit_scientific_checkpoint:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        stages=AUDIT_STAGES
+    output:
+        report=SCIENTIFIC_AUDIT,
+        retention=f"{OUT}/validation/cell_retention.csv",
+        confidence=f"{OUT}/validation/annotation_confidence.csv"
+    shell:
+        (
+            "python -m src.audit_scientific_checkpoint --config {CFG} "
+            "--inp {input.h5ad} --mapping {input.mapping} "
+            "--report {output.report} "
+            "--retention-out {output.retention} "
+            "--confidence-out {output.confidence}"
         )
 
 
 rule composition_age_corrected:
     input:
         h5ad=CHECKPOINT,
-        mapping=MAPPING
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT
     output:
         fig_composition=f"{OUT}/figures/age_celltype_composition_by_bin.png",
         fig_trends=f"{OUT}/figures/age_celltype_top_trends.png",
@@ -81,7 +108,8 @@ rule composition_age_corrected:
 rule signature_age_corrected:
     input:
         h5ad=CHECKPOINT,
-        mapping=MAPPING
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT
     output:
         fig_heatmap=f"{OUT}/figures/signature_age_heatmap.png",
         fig_top=f"{OUT}/figures/signature_age_top_associations.png",
@@ -101,7 +129,8 @@ rule signature_age_corrected:
 rule age_prediction_corrected:
     input:
         h5ad=CHECKPOINT,
-        mapping=MAPPING
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT
     output:
         fig_pred=f"{OUT}/figures/age_pred_observed_vs_predicted.png",
         fig_mae=f"{OUT}/figures/age_pred_mae_by_celltype.png",
@@ -121,7 +150,8 @@ rule age_prediction_corrected:
 rule sensitivity_age_corrected:
     input:
         h5ad=CHECKPOINT,
-        mapping=MAPPING
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT
     output:
         manifest=f"{OUT}/sensitivity_age/sensitivity_manifest.csv",
         summary=f"{OUT}/sensitivity_age/sensitivity_summary.csv",
@@ -175,8 +205,10 @@ rule compare_replicate_correction:
 rule validate_replicate_correction:
     input:
         audit=f"{OUT}/tables/biological_replicate_audit.json",
+        scientific_audit=SCIENTIFIC_AUDIT,
         mapping=MAPPING,
         composition=f"{OUT}/tables/age_celltype_trend_stats.csv",
+        fractions=f"{OUT}/tables/age_celltype_fraction_by_donor.csv",
         signature=f"{OUT}/tables/signature_age_associations.csv",
         predictions=f"{OUT}/tables/age_pred_cv_predictions.csv",
         sensitivity=f"{OUT}/sensitivity_age/sensitivity_manifest.csv",
@@ -252,7 +284,8 @@ rule draft_corrected_public_assets:
 rule pseudobulk_aggregate_corrected:
     input:
         h5ad=CHECKPOINT,
-        mapping=MAPPING
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT
     output:
         matrix=f"{PSEUDOBULK}/pseudobulk_counts.mtx.gz",
         profiles=f"{PSEUDOBULK}/pseudobulk_profiles.csv",

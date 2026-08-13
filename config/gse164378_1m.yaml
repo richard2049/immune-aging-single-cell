@@ -12,6 +12,7 @@ run:
   # Reproduces the accepted one-million-cell checkpoint.
   max_cells: 1000000
   seed: 42
+  allow_placeholder_outputs: false
 
 paths:
   input_h5ad: data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad

@@ -19,6 +19,13 @@ from .plot_style import (
     save_placeholder,
     style_axis,
 )
+from .scientific_guardrails import (
+    build_complete_nuisance_design,
+    require_placeholder_permission,
+    residualize_complete,
+    resolve_covariates,
+    validate_replicate_covariates,
+)
 from .utils import ensure_dir, load_config
 
 DEFAULT_SIGNATURES = {
@@ -468,57 +475,13 @@ def _resolve_covariate_cols(
     obs_cols: list[str], cfg: dict, colmap: dict[str, str | None]
 ) -> list[str]:
     scfg = cfg.get("signature_age", {})
-    requested = scfg.get("covariate_cols")
-    if isinstance(requested, list):
-        candidates = [str(c) for c in requested]
-    else:
-        candidates = []
-        if colmap.get("sex") is not None:
-            candidates.append(str(colmap["sex"]))
-
-    cols = set(obs_cols)
-    out: list[str] = []
-    for c in candidates:
-        if c in cols and c not in out:
-            out.append(c)
-    return out
-
-
-def _build_covariate_design(df: pd.DataFrame) -> np.ndarray | None:
-    if df.empty:
-        return None
-
-    mats: list[np.ndarray] = []
-    for col in df.columns:
-        s = df[col]
-        num = pd.to_numeric(s, errors="coerce")
-        numeric_ratio = float(num.notna().mean())
-        if numeric_ratio > 0.95:
-            fill = float(num.median(skipna=True)) if num.notna().any() else 0.0
-            mats.append(num.fillna(fill).to_numpy(dtype=float).reshape(-1, 1))
-            continue
-
-        cat = s.astype(str).fillna("NA")
-        dummies = pd.get_dummies(cat, prefix=str(col), drop_first=True)
-        if dummies.shape[1] > 0:
-            mats.append(dummies.to_numpy(dtype=float))
-
-    if not mats:
-        return None
-    x = np.concatenate(mats, axis=1)
-    intercept = np.ones((x.shape[0], 1), dtype=float)
-    return np.concatenate([intercept, x], axis=1)
-
-
-def _residualize_vector(y: np.ndarray, x: np.ndarray | None) -> np.ndarray:
-    y = np.asarray(y, dtype=float)
-    if x is None or x.shape[0] != y.shape[0] or x.shape[1] == 0:
-        return y - float(np.mean(y))
-    beta, *_ = np.linalg.lstsq(x, y, rcond=None)
-    res = y - x @ beta
-    if not np.isfinite(res).all() or float(np.std(res)) == 0.0:
-        return y - float(np.mean(y))
-    return res
+    defaults = (str(colmap["sex"]),) if colmap.get("sex") is not None else ()
+    return resolve_covariates(
+        obs_cols,
+        scfg,
+        section_name="signature_age",
+        defaults=defaults,
+    )
 
 
 def _prepare_xy_for_stats(
@@ -532,12 +495,10 @@ def _prepare_xy_for_stats(
     if not adjust_covariates or not covariate_cols:
         return x, y, False
 
-    design = _build_covariate_design(g[covariate_cols].copy())
-    if design is None:
-        return x, y, False
-
-    x_res = _residualize_vector(x, design)
-    y_res = _residualize_vector(y, design)
+    context = f"signature association for {score_col!r}"
+    design = build_complete_nuisance_design(g[covariate_cols].copy(), context=context)
+    x_res = residualize_complete(x, design, label="age", context=context)
+    y_res = residualize_complete(y, design, label=score_col, context=context)
     return x_res, y_res, True
 
 
@@ -956,6 +917,7 @@ def main() -> None:
         if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
             adata_backed.file.close()
         msg = f"Missing required columns: {', '.join(missing)}"
+        require_placeholder_permission(cfg, msg)
         pd.DataFrame().to_csv(args.table_scores, index=False)
         _empty_association_table().to_csv(args.table_assoc, index=False)
         if args.table_signature_meta:
@@ -992,6 +954,9 @@ def main() -> None:
     if len(sel_idx) == 0:
         if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
             adata_backed.file.close()
+        require_placeholder_permission(
+            cfg, "Signature analysis has no eligible cells after filtering."
+        )
         pd.DataFrame().to_csv(args.table_scores, index=False)
         _empty_association_table().to_csv(args.table_assoc, index=False)
         if args.table_signature_meta:
@@ -1042,8 +1007,10 @@ def main() -> None:
 
     obs = adata.obs.copy()
     obs["age"] = pd.to_numeric(obs[str(colmap["age"])], errors="coerce")
-    obs["donor_id"] = obs[str(colmap["donor"])].astype(str)
-    obs["cell_type"] = obs[str(colmap["cell_type"])].astype(str)
+    obs["donor_id"] = obs[str(colmap["donor"])].astype("string").str.strip()
+    obs["cell_type"] = obs[str(colmap["cell_type"])].astype("string").str.strip()
+    obs["donor_id"] = obs["donor_id"].mask(obs["donor_id"].eq(""))
+    obs["cell_type"] = obs["cell_type"].mask(obs["cell_type"].eq(""))
     for cov in covariate_cols:
         if cov in adata.obs.columns:
             obs[cov] = adata.obs[cov]
@@ -1051,6 +1018,14 @@ def main() -> None:
     base_cols = ["donor_id", "age", "cell_type"] + [c for c in covariate_cols if c in obs.columns]
     obs = pd.concat([obs[base_cols], score_df], axis=1)
     obs = obs.dropna(subset=["age", "donor_id", "cell_type"])
+    obs["donor_id"] = obs["donor_id"].astype(str)
+    obs["cell_type"] = obs["cell_type"].astype(str)
+    validate_replicate_covariates(
+        obs,
+        replicate_col="donor_id",
+        covariate_cols=covariate_cols,
+        context="signature_age",
+    )
 
     agg = _aggregate_scores(
         obs,

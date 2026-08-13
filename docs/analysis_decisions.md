@@ -11,9 +11,11 @@ The source `donor_id` values were reused across pools and therefore could not
 serve as independent donor-level units. The corrected workflow uses `Tube_id`
 as `biological_replicate_id`. This definition produced 317 biological
 replicates across 1,000,000 cells with no detected metadata conflicts, and it
-is used for donor-level summaries and cross-validation grouping. The upstream
-annotated AnnData checkpoint is reused read-only because its learned cell-level
-representation did not depend on the invalid donor label.
+is used for donor-level summaries and cross-validation grouping. The historical
+annotated AnnData checkpoint is no longer accepted for downstream regeneration
+because it predates the current executable provenance contract. Its replacement
+must preserve the accepted replicate definition and pass checkpoint
+qualification before use.
 
 Evidence: [corrected-results review](corrected_results_review.md) and
 [scientific verification contract](verification_contract.md).
@@ -65,6 +67,29 @@ and it has no established clinical validity.
 
 Evidence: [scientific verification contract](verification_contract.md) and
 [corrected-results review](corrected_results_review.md).
+
+## Executable checkpoint and association safeguards
+
+Maintained study profiles fail when required analytical inputs, configured
+covariates, dependencies, estimability, or provenance are unavailable. Demo
+profiles may opt into placeholder outputs explicitly; real-data profiles may
+not. Composition analyses use the complete eligible
+biological-replicate-by-cell-type grid, treating an unobserved population as a
+zero count while reporting positive-count support separately.
+
+The corrected workflow requires a passing checkpoint audit before composition,
+signature, prediction, sensitivity, or pseudobulk aggregation can run. The
+audit records resolved configuration and input fingerprints, metadata
+completeness, stage-wise retention, annotation-confidence summaries, required
+representations, and model-stage provenance. These checks establish technical
+compatibility, not biological validity.
+
+The historical one-million-cell checkpoint currently fails only the required
+scVI, clustering, and CellTypist provenance checks. Numerical results and
+public figures derived from that checkpoint remain withdrawn pending a staged
+rebuild, validation, and renewed human review.
+
+Evidence: [scientific verification contract](verification_contract.md).
 
 ## Robustness before gene-level interpretation
 
