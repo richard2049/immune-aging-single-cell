@@ -60,14 +60,42 @@ rule differently. Keep the rule application-specific and outbound, never
 inbound, and remove it when installation and model downloads finish. Do not
 leave a broad outbound rule for a general Python interpreter permanently.
 
-## GPU training
-The tracked configs default to CPU because `environment.yml` installs CPU-only
-PyTorch for portability. To use GPU training, first install a CUDA-enabled
-PyTorch build that matches the local driver/CUDA stack, then set:
-- `config/<profile>.yml` or `config/<profile>.yaml` -> `scvi -> accelerator: gpu`
+## GPU Training
 
-If `scvi_train.py` fails with CUDA errors, return the profile to:
-- `scvi -> accelerator: cpu`
+The tracked configs and `environment.yml` default to CPU for portability and
+CI. `environment-gpu.yml` installs the official PyTorch 2.5.1 CUDA 12.1 wheels
+in a separate environment; the wheels include their user-space CUDA runtime,
+so a separate CUDA Toolkit installation is not required for this workflow.
+The NVIDIA display driver must support CUDA 12.1 (Windows driver 527.41 or
+newer according to NVIDIA's CUDA 12.1 release notes).
+
+Create and inspect the optional environment:
+
+```powershell
+conda env create -n immune-aging-scvi-gpu -f environment-gpu.yml
+conda activate immune-aging-scvi-gpu
+python -m pip check
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
+nvidia-smi
+```
+
+Use `scvi.accelerator: gpu` only in the local config for a qualified run. Use
+`scvi.accelerator: cpu` to execute the same CUDA-enabled environment on CPU;
+no package reinstall is needed. Do not edit a tracked study profile merely to
+switch hardware for a local run.
+
+Before a long run, require a bounded scVI training smoke test on both backends.
+Record the PyTorch version, CUDA build, driver, device, elapsed time, and peak
+GPU memory. Stop and use CPU if CUDA initialization fails, required DLLs are
+missing, memory is exhausted, or the driver resets. Avoid combining Conda CUDA
+runtime packages, a CUDA-enabled XGBoost build, and PyTorch wheels built for a
+different CUDA release in one environment.
+
+Normal GPU compute is managed by the driver and its thermal/power limits, but
+no software environment can guarantee zero hardware wear. Keep vents clear,
+use mains power and the manufacturer's normal performance profile, and inspect
+temperature and memory with `nvidia-smi` during the first full run. A short
+functional smoke test is preferable to an unnecessary prolonged stress test.
 
 ## Out-of-memory
 - Do NOT densify neighbor graphs (`.toarray()`).

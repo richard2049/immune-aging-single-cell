@@ -26,7 +26,9 @@ def _read_raw(path: Path) -> dict:
 
 class ConfigProfileContractTests(unittest.TestCase):
     def test_supported_profile_inventory_is_explicit(self) -> None:
-        observed = tuple(sorted(CONFIG_DIR.glob("*.y*ml")))
+        observed = tuple(
+            sorted(path for path in CONFIG_DIR.glob("*.y*ml") if ".local." not in path.name)
+        )
         self.assertEqual(observed, SUPPORTED_PROFILES)
         self.assertFalse(Path("config/config.yaml").exists())
         self.assertFalse(Path("config/config.real.yml").exists())

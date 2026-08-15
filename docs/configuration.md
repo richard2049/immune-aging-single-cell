@@ -55,6 +55,21 @@ inherited values.
   configured scientific audit.
 - Use a local copy of the custom example for any other dataset.
 
+## CPU And GPU Selection
+
+The tracked profiles select CPU so they remain portable. Hardware selection is
+an execution setting, not evidence for changing the model or biological
+design. Use `environment.yml` for the portable CPU runtime and
+`environment-gpu.yml` for the separately qualified NVIDIA CUDA 12.1 runtime.
+The latter can execute either `scvi.accelerator: cpu` or
+`scvi.accelerator: gpu` without reinstalling packages.
+
+For a local GPU study run, use an ignored `.local.yaml` profile with a distinct
+output directory and override only the accelerator and device count. Preserve
+the tracked seed, inclusion, covariates, layer, and model parameters. A failed
+GPU qualification should fall back to CPU; it should not trigger an analysis
+design change.
+
 Changing input inclusion, replicate identity, covariates, model formulas, or
 inferential thresholds is an analysis-design change and requires scientific
 review. A new output directory should be used whenever such a change could

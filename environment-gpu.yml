@@ -1,0 +1,52 @@
+# Optional NVIDIA GPU runtime for the immune-aging-scvi workflow.
+# PyTorch CUDA builds can still execute CPU stages by setting
+# `scvi.accelerator: cpu`. This profile is qualified separately from the
+# portable CPU environment in environment.yml.
+
+name: immune-aging-scvi
+
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+
+dependencies:
+  # --- Python ---
+  - python=3.10
+  - pip
+  - pyyaml=6.0.*
+
+  # --- Core scientific stack ---
+  - numpy=2.2.*
+  - pandas=2.3.*
+  - scipy=1.15.*
+  - scikit-learn=1.7.*
+  # The current workflow does not request XGBoost's GPU backend. Keeping its
+  # CPU build avoids introducing an unrelated CUDA runtime into this env.
+  - xgboost=2.1.*=cpu_*
+
+  # --- Single-cell stack ---
+  - anndata=0.11.*
+  - scanpy=1.11.*
+  - umap-learn=0.5.*
+  - python-igraph=1.0.*
+  - leidenalg=0.12.*
+  - h5py=3.13.*
+  - pytables=3.10.*
+
+  # --- Workflow / plotting ---
+  - snakemake-minimal=7.32.*
+  - matplotlib=3.10.*
+
+  # --- PyPI packages ---
+  - pip:
+      # Official PyTorch cu121 wheels bundle a coherent CUDA runtime and can
+      # also execute CPU stages. Qualify the host driver before use; NVIDIA
+      # documents 527.41 as the CUDA 12.1 minimum on Windows.
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch==2.5.1+cu121
+      - torchvision==0.20.1+cu121
+      - torchaudio==2.5.1+cu121
+      - scvi-tools==1.3.3
+      - celltypist==1.7.1
+      - scikit-misc==0.5.2
