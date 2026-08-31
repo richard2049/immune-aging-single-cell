@@ -1,10 +1,9 @@
 # Pseudobulk Robustness Audit And Evidence Preparation
 
 > [!IMPORTANT]
-> This audit applies to historical outputs whose annotated checkpoint is now
-> pending provenance-complete requalification. Its gene-review queue must not be
-> interpreted or promoted until pseudobulk outputs are regenerated and the
-> technical audit is repeated.
+> This audit is superseded by decision 011. Its models treated repeated sample
+> units as independent and used the wrong study identity. The gene-review queue
+> is historical and cannot support current interpretation or promotion.
 
 ## Scope
 

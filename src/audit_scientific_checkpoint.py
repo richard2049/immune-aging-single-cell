@@ -94,6 +94,11 @@ def _check(
 
 def _required_obs_columns(config: dict[str, Any]) -> list[str]:
     columns = {canonical_replicate_column(config)}
+    unit_section = config.get("biological_units", {})
+    for key in ("subject_col", "sample_unit_col", "technical_library_col"):
+        value = unit_section.get(key)
+        if value:
+            columns.add(str(value))
     for section_name in ("composition_age", "signature_age", "age_prediction"):
         section = config.get(section_name, {})
         for key in ("age_col", "celltype_col"):
@@ -148,17 +153,33 @@ def _stage_retention(config: dict[str, Any], checks: list[dict[str, Any]]) -> pd
 
 
 def _retention_by_stratum(config: dict[str, Any], mapping_path: Path) -> pd.DataFrame:
-    section = config.get("biological_replicates", {})
+    longitudinal = "biological_units" in config
+    section = config.get("biological_units", config.get("biological_replicates", {}))
     source_path = Path(str(section["source_table_path"]))
     separator = str(section.get("source_table_sep", ","))
     header = list(pd.read_csv(source_path, sep=separator, nrows=0).columns)
     requests = {
         "cell_id": str(section.get("source_table_join_key", "cell_id")),
-        "biological_replicate_id": str(section.get("source_col", "tube_id")),
         "age": str(section.get("age_col", "age")),
         "sex": str(section.get("sex_col", "sex")),
         "batch": str(section.get("batch_col", "batch")),
     }
+    if longitudinal:
+        requests.update(
+            {
+                str(section.get("subject_col", "subject_id")): str(
+                    section.get("subject_source_col", "donor_id")
+                ),
+                str(section.get("sample_unit_col", "sample_unit_id")): str(
+                    section.get("sample_unit_source_col", "tube_id")
+                ),
+                str(section.get("technical_library_col", "technical_library_id")): str(
+                    section.get("technical_library_source_col", "file_name")
+                ),
+            }
+        )
+    else:
+        requests["biological_replicate_id"] = str(section.get("source_col", "tube_id"))
     resolved = {
         output: _resolve_column(header, requested) for output, requested in requests.items()
     }
@@ -183,7 +204,18 @@ def _retention_by_stratum(config: dict[str, Any], mapping_path: Path) -> pd.Data
         frame["age_decade"] = (np.floor(frame["age"] / 10.0) * 10.0).astype("Int64")
 
     rows: list[dict[str, Any]] = []
-    for stratum in ("biological_replicate_id", "sex", "batch", "age_decade"):
+    strata = (
+        [
+            str(section.get("subject_col", "subject_id")),
+            str(section.get("sample_unit_col", "sample_unit_id")),
+            "sex",
+            "batch",
+            "age_decade",
+        ]
+        if longitudinal
+        else ["biological_replicate_id", "sex", "batch", "age_decade"]
+    )
+    for stratum in strata:
         source_counts = source[stratum].astype("string").fillna("__MISSING__").value_counts()
         selected_counts = selected[stratum].astype("string").fillna("__MISSING__").value_counts()
         for level in sorted(set(source_counts.index).union(selected_counts.index)):
@@ -255,16 +287,45 @@ def _provenance_checks(
 ) -> dict[str, Any]:
     required_fields = {
         "scvi_training_provenance": {
+            "started_at_utc",
+            "completed_at_utc",
+            "input_path",
+            "input_shape",
+            "input_obs_names_sha256",
+            "input_var_names_sha256",
+            "config_path",
+            "resolved_config_sha256",
             "seed",
             "layer",
             "categorical_covariates",
             "continuous_covariates",
             "allow_missing_covariates",
+            "model_args",
+            "training_args",
+            "accelerator",
+            "devices",
+            "scvi_tools_version",
+            "torch_version",
+            "anndata_version",
+            "scanpy_version",
         },
         "clustering_provenance": {
+            "started_at_utc",
+            "completed_at_utc",
+            "input_path",
+            "input_shape",
+            "input_obs_names_sha256",
+            "input_var_names_sha256",
+            "config_path",
+            "resolved_config_sha256",
             "seed",
+            "n_jobs",
             "use_rep",
             "leiden_resolution",
+            "neighbors_args",
+            "umap_args",
+            "leiden_args",
+            "scanpy_version",
         },
         "celltypist_provenance": {
             "model_identifier",
@@ -305,6 +366,30 @@ def _provenance_checks(
                 passed=int(value["seed"]) == seed,
                 detail=f"configured={seed}; observed={value['seed']}",
             )
+    clustering = observed.get("clustering_provenance")
+    clustering_config = config.get("clustering")
+    if isinstance(clustering, dict) and isinstance(clustering_config, dict):
+        from .cluster import _h5ad_safe_arguments
+
+        expected = {
+            "n_jobs": int(clustering_config["n_jobs"]),
+            "use_rep": str(clustering_config["use_rep"]),
+            "leiden_resolution": float(clustering_config["leiden_resolution"]),
+            "neighbors_args": _h5ad_safe_arguments(clustering_config["neighbors_args"]),
+            "umap_args": _h5ad_safe_arguments(clustering_config["umap_args"]),
+            "leiden_args": _h5ad_safe_arguments(clustering_config["leiden_args"]),
+        }
+        mismatches = {
+            key: {"configured": value, "observed": clustering.get(key)}
+            for key, value in expected.items()
+            if clustering.get(key) != value
+        }
+        _check(
+            checks,
+            name="clustering_parameters_match_config",
+            passed=not mismatches,
+            detail="matched" if not mismatches else f"mismatches={mismatches}",
+        )
     return observed
 
 
@@ -315,7 +400,8 @@ def audit(
     mapping_path: Path,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
     config = load_config(config_path)
-    replicate_source_path = Path(str(config["biological_replicates"]["source_table_path"]))
+    unit_section = config.get("biological_units", config.get("biological_replicates", {}))
+    replicate_source_path = Path(str(unit_section["source_table_path"]))
     checks: list[dict[str, Any]] = []
     retention = _stage_retention(config, checks)
     retention = pd.concat(

@@ -14,6 +14,7 @@ import pandas as pd
 import scipy.sparse as sp
 from scipy.io import mmwrite
 
+from .annotation_mapping import attach_analysis_cell_types
 from .biological_replicates import attach_biological_replicates
 from .utils import ensure_dir, load_config
 
@@ -21,6 +22,29 @@ from .utils import ensure_dir, load_config
 def _clean_string(values: pd.Series) -> pd.Series:
     cleaned = values.astype("string").str.strip()
     return cleaned.mask(cleaned.eq(""))
+
+
+def _validate_pseudobulk_metadata(
+    obs: pd.DataFrame,
+    *,
+    required_columns: list[str],
+    celltype_col: str,
+) -> dict[str, int]:
+    model_columns = [column for column in required_columns if column != celltype_col]
+    missing_model = obs[model_columns].isna().sum()
+    missing_model = missing_model[missing_model.gt(0)]
+    if not missing_model.empty:
+        detail = ", ".join(f"{column}={int(count)}" for column, count in missing_model.items())
+        raise ValueError(f"Pseudobulk grouping and model metadata are incomplete ({detail}).")
+
+    analysis_eligible = obs[celltype_col].notna()
+    eligible_cells = int(analysis_eligible.sum())
+    if eligible_cells == 0:
+        raise ValueError("No cells have an approved pseudobulk analysis label.")
+    return {
+        "analysis_eligible_cells": eligible_cells,
+        "excluded_nonprimary_cells": int((~analysis_eligible).sum()),
+    }
 
 
 def _require_contract(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -37,6 +61,8 @@ def _require_contract(cfg: dict[str, Any]) -> dict[str, Any]:
         "primary_cell_types",
         "exploratory_cell_types",
     ]
+    if "subject_col" in contract:
+        required.append("subject_col")
     missing = [key for key in required if key not in contract]
     if missing:
         raise KeyError("Missing pseudobulk_de configuration keys: " + ", ".join(missing))
@@ -57,28 +83,48 @@ def _replicate_metadata(
     age_col: str,
     sex_col: str,
     batch_col: str,
+    subject_col: str | None = None,
 ) -> pd.DataFrame:
     grouped = obs.groupby(replicate_col, observed=True, sort=True)
-    conflicts = grouped[[age_col, sex_col, batch_col]].nunique(dropna=False)
+    consistency_columns = [age_col, sex_col, batch_col]
+    if subject_col:
+        consistency_columns.append(subject_col)
+    conflicts = grouped[consistency_columns].nunique(dropna=False)
     bad = conflicts.gt(1).any(axis=1)
     if bool(bad.any()):
         examples = ", ".join(conflicts.index[bad].astype(str)[:5])
         raise ValueError(
-            f"Age, sex, or batch is inconsistent within biological replicate; examples: {examples}"
+            f"Subject, age, sex, or batch is inconsistent within sample unit; examples: {examples}"
         )
 
-    metadata = grouped[[age_col, sex_col, batch_col]].first().reset_index()
+    metadata = grouped[consistency_columns].first().reset_index()
+    output_replicate_col = "sample_unit_id" if subject_col else "biological_replicate_id"
     metadata = metadata.rename(
         columns={
-            replicate_col: "biological_replicate_id",
+            replicate_col: output_replicate_col,
             age_col: "age",
             sex_col: "sex",
             batch_col: "batch",
+            **({subject_col: "subject_id"} if subject_col else {}),
         }
     )
     metadata["age"] = pd.to_numeric(metadata["age"], errors="coerce")
-    if metadata[["age", "sex", "batch"]].isna().any().any():
-        raise ValueError("Replicate-level age, sex, and batch must be complete.")
+    completeness_columns = ["age", "sex", "batch"]
+    if subject_col:
+        completeness_columns.append("subject_id")
+    if metadata[completeness_columns].isna().any().any():
+        raise ValueError("Sample-level subject, age, sex, and batch must be complete.")
+    if subject_col:
+        subject_sex_levels = metadata.groupby("subject_id", observed=True)["sex"].nunique(
+            dropna=False
+        )
+        conflicting_subjects = subject_sex_levels[subject_sex_levels.ne(1)]
+        if not conflicting_subjects.empty:
+            examples = ", ".join(conflicting_subjects.index.astype(str)[:5])
+            raise ValueError(
+                "Sex is inconsistent across sample units from the same subject; "
+                f"examples: {examples}"
+            )
     metadata["age_decade"] = metadata["age"] / 10.0
     return metadata
 
@@ -120,6 +166,14 @@ def _design_preflight(metadata: pd.DataFrame) -> dict[str, Any]:
         "sex_levels": factor_levels["sex"],
         "batch_levels": factor_levels["batch"],
         "full_design_estimable": estimable,
+        "n_subjects": int(
+            metadata["subject_id"].nunique() if "subject_id" in metadata else len(metadata)
+        ),
+        "n_repeated_subjects": int(
+            metadata.groupby("subject_id", observed=True).size().gt(1).sum()
+            if "subject_id" in metadata
+            else 0
+        ),
     }
 
 
@@ -129,10 +183,14 @@ def _build_profiles_and_eligibility(
     contract: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     replicate_col = str(contract["replicate_col"])
+    output_replicate_col = (
+        "sample_unit_id" if contract.get("subject_col") else "biological_replicate_id"
+    )
     celltype_col = str(contract["celltype_col"])
     sample_col = str(contract.get("sample_col", ""))
     min_cells = int(contract.get("min_cells_per_pseudobulk", 50))
-    min_replicates = int(contract.get("min_replicates_per_celltype", 12))
+    min_sample_units = int(contract.get("min_replicates_per_celltype", 12))
+    min_subjects = int(contract.get("min_subjects_per_celltype", min_sample_units))
     min_age_span = float(contract.get("min_age_span_years", 12))
     min_residual_df = int(contract.get("min_residual_df", 5))
 
@@ -144,13 +202,13 @@ def _build_profiles_and_eligibility(
         .rename(
             columns={
                 celltype_col: "cell_type",
-                replicate_col: "biological_replicate_id",
+                replicate_col: output_replicate_col,
             }
         )
     )
     counts = counts.merge(
         replicate_metadata,
-        on="biological_replicate_id",
+        on=output_replicate_col,
         how="left",
         validate="many_to_one",
     )
@@ -168,13 +226,13 @@ def _build_profiles_and_eligibility(
             .rename(
                 columns={
                     celltype_col: "cell_type",
-                    replicate_col: "biological_replicate_id",
+                    replicate_col: output_replicate_col,
                 }
             )
         )
         counts = counts.merge(
             technical_libraries,
-            on=["cell_type", "biological_replicate_id"],
+            on=["cell_type", output_replicate_col],
             how="left",
             validate="one_to_one",
         )
@@ -198,22 +256,37 @@ def _build_profiles_and_eligibility(
             else np.nan
         )
         design = _design_preflight(qualifying)
+        n_subjects_observed = int(
+            group["subject_id"].nunique() if "subject_id" in group else len(group)
+        )
+        n_subjects_qualifying = int(
+            qualifying["subject_id"].nunique() if "subject_id" in qualifying else len(qualifying)
+        )
         reasons: list[str] = []
         analysis_tier = tier.get(str(cell_type), "not_approved")
         if analysis_tier == "not_approved":
             reasons.append("not_approved_by_analysis_contract")
-        if len(qualifying) < min_replicates:
-            reasons.append("insufficient_qualifying_replicates")
+        if len(qualifying) < min_sample_units:
+            reasons.append("insufficient_qualifying_sample_units")
+        if n_subjects_qualifying < min_subjects:
+            reasons.append("insufficient_qualifying_subjects")
         if not np.isfinite(age_span) or age_span < min_age_span:
             reasons.append("insufficient_age_span")
+        if not bool(design["full_design_estimable"]):
+            reasons.append("fixed_effect_design_not_estimable")
+        if contract.get("subject_col") and design["n_repeated_subjects"] < 1:
+            reasons.append("no_repeated_subject_support")
         if design["residual_df"] < min_residual_df:
             reasons.append("insufficient_full_model_residual_df")
 
         support_passes = not any(
             reason
             in {
-                "insufficient_qualifying_replicates",
+                "insufficient_qualifying_sample_units",
+                "insufficient_qualifying_subjects",
                 "insufficient_age_span",
+                "fixed_effect_design_not_estimable",
+                "no_repeated_subject_support",
                 "insufficient_full_model_residual_df",
             }
             for reason in reasons
@@ -226,8 +299,10 @@ def _build_profiles_and_eligibility(
             {
                 "cell_type": str(cell_type),
                 "analysis_tier": analysis_tier,
-                "n_replicates_observed": int(len(group)),
-                "n_replicates_qualifying": int(len(qualifying)),
+                "n_sample_units_observed": int(len(group)),
+                "n_sample_units_qualifying": int(len(qualifying)),
+                "n_subjects_observed": n_subjects_observed,
+                "n_subjects_qualifying": n_subjects_qualifying,
                 "age_span_years": age_span,
                 **design,
                 "aggregation_status": ("included" if aggregate else "excluded"),
@@ -241,8 +316,10 @@ def _build_profiles_and_eligibility(
             {
                 "cell_type": cell_type,
                 "analysis_tier": tier[cell_type],
-                "n_replicates_observed": 0,
-                "n_replicates_qualifying": 0,
+                "n_sample_units_observed": 0,
+                "n_sample_units_qualifying": 0,
+                "n_subjects_observed": 0,
+                "n_subjects_qualifying": 0,
                 "age_span_years": np.nan,
                 "design_columns": 0,
                 "design_rank": 0,
@@ -250,6 +327,8 @@ def _build_profiles_and_eligibility(
                 "sex_levels": 0,
                 "batch_levels": 0,
                 "full_design_estimable": False,
+                "n_subjects": 0,
+                "n_repeated_subjects": 0,
                 "aggregation_status": "excluded",
                 "exclusion_reasons": "configured_cell_type_not_observed",
             }
@@ -260,7 +339,7 @@ def _build_profiles_and_eligibility(
     ].copy()
     profiles["analysis_tier"] = profiles["cell_type"].map(tier)
     profiles = profiles.sort_values(
-        ["cell_type", "biological_replicate_id"],
+        ["cell_type", output_replicate_col],
         kind="stable",
     ).reset_index(drop=True)
     profiles.insert(
@@ -281,13 +360,16 @@ def _profile_codes(
     replicate_col: str,
     celltype_col: str,
 ) -> np.ndarray:
-    profile_index = pd.MultiIndex.from_frame(profiles[["biological_replicate_id", "cell_type"]])
+    output_replicate_col = (
+        "sample_unit_id" if "sample_unit_id" in profiles else "biological_replicate_id"
+    )
+    profile_index = pd.MultiIndex.from_frame(profiles[[output_replicate_col, "cell_type"]])
     cell_index = pd.MultiIndex.from_arrays(
         [
             obs[replicate_col].astype(str),
             obs[celltype_col].astype(str),
         ],
-        names=["biological_replicate_id", "cell_type"],
+        names=[output_replicate_col, "cell_type"],
     )
     return profile_index.get_indexer(cell_index).astype(np.int64, copy=False)
 
@@ -417,12 +499,14 @@ def run(
     adata = ad.read_h5ad(input_h5ad, backed="r")
     try:
         mapping_report = attach_biological_replicates(adata, cfg)
+        annotation_report = attach_analysis_cell_types(adata, cfg)
         obs = adata.obs.copy()
         replicate_col = str(contract["replicate_col"])
         celltype_col = str(contract["celltype_col"])
         age_col = str(contract["age_col"])
         sex_col = str(contract["sex_col"])
         batch_col = str(contract["batch_col"])
+        subject_col = str(contract["subject_col"]) if contract.get("subject_col") else None
         required_columns = [
             replicate_col,
             celltype_col,
@@ -430,6 +514,11 @@ def run(
             sex_col,
             batch_col,
         ]
+        if subject_col:
+            required_columns.append(subject_col)
+        sample_col = str(contract.get("sample_col", ""))
+        if sample_col:
+            required_columns.append(sample_col)
         missing = [column for column in required_columns if column not in obs]
         if missing:
             raise KeyError("Annotated checkpoint lacks required columns: " + ", ".join(missing))
@@ -438,9 +527,16 @@ def run(
         obs[celltype_col] = _clean_string(obs[celltype_col])
         obs[sex_col] = _clean_string(obs[sex_col])
         obs[batch_col] = _clean_string(obs[batch_col])
+        if subject_col:
+            obs[subject_col] = _clean_string(obs[subject_col])
+        if sample_col:
+            obs[sample_col] = _clean_string(obs[sample_col])
         obs[age_col] = pd.to_numeric(obs[age_col], errors="coerce")
-        if obs[required_columns].isna().any().any():
-            raise ValueError("Pseudobulk grouping and model metadata must be complete.")
+        metadata_report = _validate_pseudobulk_metadata(
+            obs,
+            required_columns=required_columns,
+            celltype_col=celltype_col,
+        )
 
         replicate_metadata = _replicate_metadata(
             obs,
@@ -448,6 +544,7 @@ def run(
             age_col=age_col,
             sex_col=sex_col,
             batch_col=batch_col,
+            subject_col=subject_col,
         )
         profiles, eligibility = _build_profiles_and_eligibility(
             obs,
@@ -502,19 +599,24 @@ def run(
         "aggregated_total_counts": int(aggregate.sum()),
         "included_cells": included_cells,
         "excluded_cells": int(len(obs) - included_cells),
+        **metadata_report,
         "n_profiles": int(len(profiles)),
         "n_primary_profiles": int(profiles["analysis_tier"].eq("primary").sum()),
         "n_exploratory_profiles": int(profiles["analysis_tier"].eq("exploratory").sum()),
         "n_genes": int(len(genes)),
         "mapping_report": mapping_report,
+        "annotation_mapping_report": annotation_report,
         "approved_contract": {
             key: contract.get(key)
             for key in [
                 "min_cells_per_pseudobulk",
                 "min_replicates_per_celltype",
+                "min_subjects_per_celltype",
                 "min_age_span_years",
                 "min_residual_df",
                 "primary_formula",
+                "subject_col",
+                "sensitivity_sample_rule",
                 "age_effect_scale",
                 "primary_cell_types",
                 "exploratory_cell_types",
@@ -547,7 +649,7 @@ def run(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Aggregate raw sparse counts by biological replicate and cell type "
+            "Aggregate raw sparse counts by sample unit and cell type "
             "under the approved pseudobulk DE contract."
         )
     )

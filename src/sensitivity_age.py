@@ -132,6 +132,11 @@ def _run_command(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _outputs_complete(paths: list[Path]) -> bool:
+    """Return true only when every expected component output is non-empty."""
+    return bool(paths) and all(path.is_file() and path.stat().st_size > 0 for path in paths)
+
+
 def _scenario_metrics(trends_path: Path, assoc_path: Path) -> dict[str, float]:
     metrics: dict[str, float] = {
         "n_trend_tests": np.nan,
@@ -185,6 +190,11 @@ def main() -> None:
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--summary", required=True)
     ap.add_argument("--done", required=True)
+    ap.add_argument(
+        "--resume-complete-components",
+        action="store_true",
+        help="Reuse a component only when all of its expected outputs are non-empty.",
+    )
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -241,46 +251,61 @@ def main() -> None:
         sig_assoc = tabledir / "signature_age_associations.csv"
         sig_meta = tabledir / "signature_gene_coverage.csv"
 
-        _run_command(
-            [
-                sys.executable,
-                "-m",
-                "src.composition_age",
-                "--config",
-                str(scenario_cfg),
-                "--inp",
-                str(args.inp),
-                "--fig-fractions",
-                str(comp_fig),
-                "--fig-trends",
-                str(comp_trends_fig),
-                "--table-donor-fractions",
-                str(comp_tbl),
-                "--table-trends",
-                str(comp_stats),
-            ]
-        )
-        _run_command(
-            [
-                sys.executable,
-                "-m",
-                "src.signature_age",
-                "--config",
-                str(scenario_cfg),
-                "--inp",
-                str(args.inp),
-                "--fig-heatmap",
-                str(sig_heat),
-                "--fig-top",
-                str(sig_top),
-                "--table-scores",
-                str(sig_scores),
-                "--table-assoc",
-                str(sig_assoc),
-                "--table-signature-meta",
-                str(sig_meta),
-            ]
-        )
+        composition_outputs = [comp_fig, comp_trends_fig, comp_tbl, comp_stats]
+        signature_outputs = [sig_heat, sig_top, sig_scores, sig_assoc, sig_meta]
+
+        if args.resume_complete_components and _outputs_complete(composition_outputs):
+            print(
+                f"[sensitivity_age] reusing complete composition outputs: {scenario_name}",
+                flush=True,
+            )
+        else:
+            _run_command(
+                [
+                    sys.executable,
+                    "-m",
+                    "src.composition_age",
+                    "--config",
+                    str(scenario_cfg),
+                    "--inp",
+                    str(args.inp),
+                    "--fig-fractions",
+                    str(comp_fig),
+                    "--fig-trends",
+                    str(comp_trends_fig),
+                    "--table-donor-fractions",
+                    str(comp_tbl),
+                    "--table-trends",
+                    str(comp_stats),
+                ]
+            )
+        if args.resume_complete_components and _outputs_complete(signature_outputs):
+            print(
+                f"[sensitivity_age] reusing complete signature outputs: {scenario_name}",
+                flush=True,
+            )
+        else:
+            _run_command(
+                [
+                    sys.executable,
+                    "-m",
+                    "src.signature_age",
+                    "--config",
+                    str(scenario_cfg),
+                    "--inp",
+                    str(args.inp),
+                    "--fig-heatmap",
+                    str(sig_heat),
+                    "--fig-top",
+                    str(sig_top),
+                    "--table-scores",
+                    str(sig_scores),
+                    "--table-assoc",
+                    str(sig_assoc),
+                    "--table-signature-meta",
+                    str(sig_meta),
+                ]
+            )
 
         manifest_rows.append(
             {

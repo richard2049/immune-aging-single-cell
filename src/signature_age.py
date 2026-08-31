@@ -10,7 +10,14 @@ import pandas as pd
 import scipy.sparse as sp
 from scipy import stats
 
+from .annotation_mapping import attach_analysis_cell_types
 from .biological_replicates import attach_biological_replicates
+from .longitudinal_stats import (
+    GEENonConvergenceError,
+    fit_independent_age_model,
+    fit_subject_aware_gee,
+    select_one_sample_per_subject,
+)
 from .plot_style import (
     DIVERGING_CMAP,
     PALETTE,
@@ -20,6 +27,7 @@ from .plot_style import (
     style_axis,
 )
 from .scientific_guardrails import (
+    NonEstimableDesignError,
     build_complete_nuisance_design,
     require_placeholder_permission,
     residualize_complete,
@@ -345,16 +353,25 @@ def _extract_signatures(cfg: dict) -> dict[str, list[str]]:
 def _pick_columns(obs_cols: list[str], cfg: dict) -> dict[str, str | None]:
     scfg = cfg.get("signature_age", {})
     age = scfg.get("age_col")
-    donor = scfg.get("donor_col")
+    configured_sample_unit = scfg.get("sample_unit_col")
+    configured_subject = scfg.get("subject_col")
+    donor = configured_sample_unit or scfg.get("donor_col")
+    subject = configured_subject or donor
     celltype = scfg.get("celltype_col")
     sex = scfg.get("sex_col")
 
     if age not in obs_cols:
         age = _first_existing(obs_cols, ["age"])
-    if donor not in obs_cols:
+    if configured_sample_unit and donor not in obs_cols:
+        donor = None
+    elif donor not in obs_cols:
         donor = _first_existing(
             obs_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
         )
+    if configured_subject and subject not in obs_cols:
+        subject = None
+    elif subject not in obs_cols:
+        subject = donor
     if celltype not in obs_cols:
         celltype = _first_existing(
             obs_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"]
@@ -362,7 +379,13 @@ def _pick_columns(obs_cols: list[str], cfg: dict) -> dict[str, str | None]:
     if sex not in obs_cols:
         sex = _first_existing(obs_cols, ["sex"])
 
-    return {"age": age, "donor": donor, "cell_type": celltype, "sex": sex}
+    return {
+        "age": age,
+        "donor": donor,
+        "subject": subject,
+        "cell_type": celltype,
+        "sex": sex,
+    }
 
 
 def _subset_cells(
@@ -505,7 +528,9 @@ def _prepare_xy_for_stats(
 def _deduplicate_donors(
     df: pd.DataFrame, score_col: str, covariate_cols: list[str]
 ) -> pd.DataFrame:
-    cols = ["donor_id", "age", score_col] + [c for c in covariate_cols if c in df.columns]
+    cols = ["donor_id", "subject_id", "age", score_col] + [
+        c for c in covariate_cols if c in df.columns
+    ]
     out = df[cols].dropna(subset=["donor_id", "age", score_col]).copy()
     if out.empty:
         return out
@@ -576,6 +601,7 @@ def _aggregate_scores(
 ) -> pd.DataFrame:
     agg_map: dict[str, tuple[str, str | callable]] = {
         "age": ("age", "median"),
+        "subject_id": ("subject_id", _mode_or_na),
         "n_cells": ("cell_type", "size"),
     }
     for c in covariate_cols:
@@ -594,6 +620,7 @@ def _empty_association_table() -> pd.DataFrame:
         "cell_type",
         "signature",
         "n_donors",
+        "n_subjects",
         "age_min",
         "age_max",
         "age_span",
@@ -611,12 +638,94 @@ def _empty_association_table() -> pd.DataFrame:
         "r_squared",
         "adjusted",
         "adjusted_for",
+        "association_model",
+        "association_effect_scale",
+        "association_standard_error",
+        "working_correlation_structure",
+        "working_correlation",
+        "covariance_type",
+        "fallback_used",
+        "fallback_reason",
+        "fallback_requires_manual_review",
+        "sensitivity_selection_rule",
+        "sensitivity_status",
+        "sensitivity_reason",
+        "sensitivity_n_subjects",
+        "sensitivity_effect_per_10y",
+        "sensitivity_effect_ci_low",
+        "sensitivity_effect_ci_high",
+        "sensitivity_pvalue",
+        "sensitivity_fdr",
+        "sensitivity_direction_concordant",
         "fdr",
         "direction",
         "fdr_significant",
         "rank",
     ]
     return pd.DataFrame(columns=cols)
+
+
+def _fit_signature_gee(
+    frame: pd.DataFrame,
+    *,
+    outcome_col: str,
+    subject_col: str,
+    covariate_cols: list[str],
+    primary_working_correlation: str,
+    nonconvergence_fallback: str | None,
+    context: str,
+) -> dict[str, object]:
+    primary_key = str(primary_working_correlation).strip().lower()
+    fallback_key = str(nonconvergence_fallback).strip().lower() if nonconvergence_fallback else None
+    supported_correlations = {"exchangeable", "independence"}
+    if primary_key not in supported_correlations:
+        raise ValueError(f"{context}: unsupported primary GEE correlation {primary_key!r}.")
+    if fallback_key not in supported_correlations | {None}:
+        raise ValueError(f"{context}: unsupported GEE fallback correlation {fallback_key!r}.")
+    if fallback_key == primary_key:
+        raise ValueError(
+            f"{context}: GEE nonconvergence fallback must differ from the primary "
+            "working correlation."
+        )
+    try:
+        result = fit_subject_aware_gee(
+            frame,
+            outcome_col=outcome_col,
+            subject_col=subject_col,
+            covariate_cols=covariate_cols,
+            family="gaussian",
+            working_correlation=primary_key,
+            context=context,
+        )
+        result.update(
+            {
+                "fallback_used": False,
+                "fallback_reason": "",
+                "fallback_requires_manual_review": False,
+            }
+        )
+        return result
+    except GEENonConvergenceError:
+        if fallback_key is None:
+            raise
+
+    result = fit_subject_aware_gee(
+        frame,
+        outcome_col=outcome_col,
+        subject_col=subject_col,
+        covariate_cols=covariate_cols,
+        family="gaussian",
+        working_correlation=fallback_key,
+        context=f"{context} (prespecified nonconvergence fallback)",
+    )
+    result.update(
+        {
+            "fallback_used": True,
+            "fallback_reason": f"{primary_key}_gee_nonconvergence",
+            "fallback_requires_manual_review": True,
+        }
+    )
+    return result
 
 
 def _association_table(
@@ -629,15 +738,29 @@ def _association_table(
     bootstrap_iterations: int,
     bootstrap_ci: float,
     seed: int,
+    subject_aware: bool = False,
+    gee_working_correlation: str = "exchangeable",
+    gee_nonconvergence_fallback: str | None = None,
 ) -> pd.DataFrame:
     rows = []
+    selected_sample_units = (
+        select_one_sample_per_subject(
+            agg,
+            subject_col="subject_id",
+            sample_col="donor_id",
+        )
+        if subject_aware
+        else set()
+    )
     adjusted_for = ",".join(covariate_cols) if (adjust_covariates and covariate_cols) else ""
     pair_idx = 0
     for cell_type, gct in agg.groupby("cell_type", observed=False):
         for sc_col in score_cols:
             t = _deduplicate_donors(gct, sc_col, covariate_cols=covariate_cols)
             n_donors = int(t["donor_id"].nunique())
-            if n_donors < min_donors_per_celltype:
+            n_subjects = int(t["subject_id"].nunique())
+            support_count = n_subjects if subject_aware else n_donors
+            if support_count < min_donors_per_celltype:
                 continue
 
             age_span = float(t["age"].max() - t["age"].min())
@@ -661,33 +784,128 @@ def _association_table(
                 ci=bootstrap_ci,
                 seed=seed + (pair_idx * 97),
             )
+            model = None
+            sensitivity_model = None
+            sensitivity_status = "not_applicable"
+            sensitivity_reason = ""
+            sensitivity_n_subjects = 0
+            if subject_aware:
+                model = _fit_signature_gee(
+                    t,
+                    outcome_col=sc_col,
+                    subject_col="subject_id",
+                    covariate_cols=covariate_cols if adjust_covariates else [],
+                    primary_working_correlation=gee_working_correlation,
+                    nonconvergence_fallback=gee_nonconvergence_fallback,
+                    context=f"signature association for {cell_type!r}/{sc_col!r}",
+                )
+                sensitivity = t[t["donor_id"].isin(selected_sample_units)].copy()
+                sensitivity_n_subjects = int(sensitivity["subject_id"].nunique())
+                sensitivity_age_span = (
+                    float(sensitivity["age"].max() - sensitivity["age"].min())
+                    if not sensitivity.empty
+                    else 0.0
+                )
+                if (
+                    sensitivity_n_subjects >= min_donors_per_celltype
+                    and sensitivity_age_span >= min_age_span
+                ):
+                    try:
+                        sensitivity_model = fit_independent_age_model(
+                            sensitivity,
+                            outcome_col=sc_col,
+                            covariate_cols=covariate_cols if adjust_covariates else [],
+                            family="gaussian",
+                            context=(
+                                f"one-sample signature sensitivity for {cell_type!r}/{sc_col!r}"
+                            ),
+                        )
+                        sensitivity_status = "completed"
+                    except NonEstimableDesignError as error:
+                        sensitivity_status = "non_estimable_rank_deficient"
+                        sensitivity_reason = str(error)
+                else:
+                    sensitivity_status = "insufficient_subject_or_age_support"
+                    sensitivity_reason = (
+                        f"n_subjects={sensitivity_n_subjects}; age_span={sensitivity_age_span:.6g}"
+                    )
             pair_idx += 1
             rows.append(
                 {
                     "cell_type": cell_type,
                     "signature": sc_col.replace("score__", ""),
                     "n_donors": n_donors,
+                    "n_subjects": n_subjects,
                     "age_min": float(t["age"].min()),
                     "age_max": float(t["age"].max()),
                     "age_span": age_span,
                     "spearman_rho": float(rho),
-                    "pvalue": float(pval),
+                    "pvalue": float(model["pvalue"] if model else pval),
                     "spearman_rho_ci_low": ci_stats["spearman_rho_ci_low"],
                     "spearman_rho_ci_high": ci_stats["spearman_rho_ci_high"],
                     "slope_per_year": float(lr.slope),
                     "slope_per_year_ci_low": ci_stats["slope_per_year_ci_low"],
                     "slope_per_year_ci_high": ci_stats["slope_per_year_ci_high"],
-                    "effect_per_10y": float(lr.slope * 10.0),
-                    "effect_per_10y_ci_low": float(ci_stats["slope_per_year_ci_low"] * 10.0)
-                    if np.isfinite(ci_stats["slope_per_year_ci_low"])
-                    else np.nan,
-                    "effect_per_10y_ci_high": float(ci_stats["slope_per_year_ci_high"] * 10.0)
-                    if np.isfinite(ci_stats["slope_per_year_ci_high"])
-                    else np.nan,
-                    "slope_pvalue": float(lr.pvalue),
+                    "effect_per_10y": (
+                        model["effect_per_10y"] if model else float(lr.slope * 10.0)
+                    ),
+                    "effect_per_10y_ci_low": (
+                        model["effect_per_10y_ci_low"]
+                        if model
+                        else float(ci_stats["slope_per_year_ci_low"] * 10.0)
+                        if np.isfinite(ci_stats["slope_per_year_ci_low"])
+                        else np.nan
+                    ),
+                    "effect_per_10y_ci_high": (
+                        model["effect_per_10y_ci_high"]
+                        if model
+                        else float(ci_stats["slope_per_year_ci_high"] * 10.0)
+                        if np.isfinite(ci_stats["slope_per_year_ci_high"])
+                        else np.nan
+                    ),
+                    "slope_pvalue": float(model["pvalue"] if model else lr.pvalue),
                     "r_squared": float(lr.rvalue**2),
                     "adjusted": bool(used_adjustment),
                     "adjusted_for": adjusted_for if used_adjustment else "",
+                    "association_model": model["model"] if model else "linear-regression",
+                    "association_effect_scale": (
+                        model["effect_scale"] if model else "score_units_per_10_years"
+                    ),
+                    "association_standard_error": (
+                        model["standard_error"]
+                        if model
+                        else float(lr.stderr * 10.0)
+                        if lr.stderr is not None and np.isfinite(lr.stderr)
+                        else np.nan
+                    ),
+                    "working_correlation_structure": (
+                        model["working_correlation_structure"] if model else ""
+                    ),
+                    "working_correlation": (model["working_correlation"] if model else np.nan),
+                    "covariance_type": model["covariance_type"] if model else "",
+                    "fallback_used": bool(model["fallback_used"]) if model else False,
+                    "fallback_reason": model["fallback_reason"] if model else "",
+                    "fallback_requires_manual_review": (
+                        bool(model["fallback_requires_manual_review"]) if model else False
+                    ),
+                    "sensitivity_selection_rule": (
+                        "earliest_age_then_sample_id" if subject_aware else ""
+                    ),
+                    "sensitivity_status": sensitivity_status,
+                    "sensitivity_reason": sensitivity_reason,
+                    "sensitivity_n_subjects": sensitivity_n_subjects,
+                    "sensitivity_effect_per_10y": (
+                        sensitivity_model["effect_per_10y"] if sensitivity_model else np.nan
+                    ),
+                    "sensitivity_effect_ci_low": (
+                        sensitivity_model["effect_per_10y_ci_low"] if sensitivity_model else np.nan
+                    ),
+                    "sensitivity_effect_ci_high": (
+                        sensitivity_model["effect_per_10y_ci_high"] if sensitivity_model else np.nan
+                    ),
+                    "sensitivity_pvalue": (
+                        sensitivity_model["pvalue"] if sensitivity_model else np.nan
+                    ),
                 }
             )
 
@@ -696,6 +914,10 @@ def _association_table(
 
     out = pd.DataFrame(rows)
     out["fdr"] = _bh_fdr(out["pvalue"].to_numpy())
+    out["sensitivity_fdr"] = _bh_fdr(out["sensitivity_pvalue"].to_numpy())
+    out["sensitivity_direction_concordant"] = (
+        np.sign(out["effect_per_10y"]) == np.sign(out["sensitivity_effect_per_10y"])
+    ).where(out["sensitivity_effect_per_10y"].notna(), pd.NA)
     out["direction"] = np.where(out["effect_per_10y"] > 0, "increase_with_age", "decrease_with_age")
     out["fdr_significant"] = out["fdr"] < 0.05
     out = out.sort_values(
@@ -724,6 +946,14 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
         values="fdr",
         aggfunc="min",
     )
+    fallback = assoc.copy()
+    fallback["fallback_used"] = fallback["fallback_used"].fillna(False).astype(bool)
+    pivot_fallback = fallback.pivot_table(
+        index="cell_type",
+        columns="signature",
+        values="fallback_used",
+        aggfunc="max",
+    ).fillna(False)
     if pivot_rho.empty:
         _save_placeholder(path, "Signature-Age Associations", "Association matrix is empty.", dpi)
         return
@@ -732,6 +962,9 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
     row_order = sig_count.sort_values(ascending=False).index
     pivot_rho = pivot_rho.loc[row_order]
     pivot_fdr = pivot_fdr.loc[row_order]
+    pivot_fallback = pivot_fallback.reindex(
+        index=pivot_rho.index, columns=pivot_rho.columns, fill_value=False
+    )
 
     fig_h = max(4, 0.35 * len(pivot_rho.index))
     fig_w = max(6, 1.2 * len(pivot_rho.columns))
@@ -759,6 +992,17 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
                     fontsize=10,
                     fontweight="bold",
                 )
+            if bool(pivot_fallback.iloc[i, j]):
+                ax.text(
+                    j + 0.28,
+                    i - 0.28,
+                    "†",
+                    ha="center",
+                    va="center",
+                    color="#333333",
+                    fontsize=8,
+                    fontweight="bold",
+                )
 
     cbar = fig.colorbar(im, ax=ax, shrink=0.8)
     cbar.set_label("Spearman rho")
@@ -766,7 +1010,7 @@ def _plot_heatmap(assoc: pd.DataFrame, path: Path, dpi: int) -> None:
     fdr_note = cbar.ax.text(
         1.15,
         -0.28,
-        "* FDR < 0.05",
+        "* FDR < 0.05\n† Independence GEE fallback",
         transform=cbar.ax.transAxes,
         ha="left",
         va="top",
@@ -845,9 +1089,15 @@ def _plot_top_panels(
         if bool(getattr(row, "adjusted", False)):
             adjusted_for = str(getattr(row, "adjusted_for", "")).strip()
             adjusted_note = f", adj={adjusted_for}" if adjusted_for else ", adj"
+        fallback_note = (
+            "\n† Independence GEE fallback; subject-clustered robust SE"
+            if bool(getattr(row, "fallback_used", False))
+            else ""
+        )
         ax.set_title(
             f"{row.cell_type} | {sig_label}\n"
-            f"rho={row.spearman_rho:.2f}, FDR={row.fdr:.2e}, effect/10y={row.effect_per_10y:.3f}{adjusted_note}"
+            f"rho={row.spearman_rho:.2f}, FDR={row.fdr:.2e}, "
+            f"effect/10y={row.effect_per_10y:.3f}{adjusted_note}{fallback_note}"
         )
         ax.set_xlabel("Age")
         ax.set_ylabel("Mean signature score")
@@ -897,6 +1147,11 @@ def main() -> None:
     assume_log1p = bool(scfg.get("assume_log1p", False))
     target_sum = float(scfg.get("normalize_target_sum", 1e4))
     materialize_chunk_size = int(scfg.get("materialize_chunk_size", 5000))
+    gee_working_correlation = str(scfg.get("gee_working_correlation", "exchangeable"))
+    raw_gee_fallback = scfg.get("gee_nonconvergence_fallback")
+    gee_nonconvergence_fallback = (
+        str(raw_gee_fallback) if raw_gee_fallback not in {None, "", "none"} else None
+    )
     bootstrap_iterations = max(0, bootstrap_iterations)
     bootstrap_ci = float(np.clip(bootstrap_ci, 0.5, 0.999))
 
@@ -910,9 +1165,12 @@ def main() -> None:
 
     adata_backed = ad.read_h5ad(args.inp, backed="r")
     attach_biological_replicates(adata_backed, cfg)
+    attach_analysis_cell_types(adata_backed, cfg)
     colmap = _pick_columns(list(adata_backed.obs.columns), cfg)
     covariate_cols = _resolve_covariate_cols(list(adata_backed.obs.columns), cfg, colmap)
-    missing = [k for k, v in colmap.items() if k in {"age", "donor", "cell_type"} and v is None]
+    missing = [
+        k for k, v in colmap.items() if k in {"age", "donor", "subject", "cell_type"} and v is None
+    ]
     if missing:
         if hasattr(adata_backed, "file") and getattr(adata_backed, "file", None) is not None:
             adata_backed.file.close()
@@ -1008,17 +1266,22 @@ def main() -> None:
     obs = adata.obs.copy()
     obs["age"] = pd.to_numeric(obs[str(colmap["age"])], errors="coerce")
     obs["donor_id"] = obs[str(colmap["donor"])].astype("string").str.strip()
+    obs["subject_id"] = obs[str(colmap["subject"])].astype("string").str.strip()
     obs["cell_type"] = obs[str(colmap["cell_type"])].astype("string").str.strip()
     obs["donor_id"] = obs["donor_id"].mask(obs["donor_id"].eq(""))
+    obs["subject_id"] = obs["subject_id"].mask(obs["subject_id"].eq(""))
     obs["cell_type"] = obs["cell_type"].mask(obs["cell_type"].eq(""))
     for cov in covariate_cols:
         if cov in adata.obs.columns:
             obs[cov] = adata.obs[cov]
 
-    base_cols = ["donor_id", "age", "cell_type"] + [c for c in covariate_cols if c in obs.columns]
+    base_cols = ["donor_id", "subject_id", "age", "cell_type"] + [
+        c for c in covariate_cols if c in obs.columns
+    ]
     obs = pd.concat([obs[base_cols], score_df], axis=1)
-    obs = obs.dropna(subset=["age", "donor_id", "cell_type"])
+    obs = obs.dropna(subset=["age", "donor_id", "subject_id", "cell_type"])
     obs["donor_id"] = obs["donor_id"].astype(str)
+    obs["subject_id"] = obs["subject_id"].astype(str)
     obs["cell_type"] = obs["cell_type"].astype(str)
     validate_replicate_covariates(
         obs,
@@ -1026,6 +1289,9 @@ def main() -> None:
         covariate_cols=covariate_cols,
         context="signature_age",
     )
+    subject_counts = obs.groupby("donor_id", observed=False)["subject_id"].nunique()
+    if bool(subject_counts.gt(1).any()):
+        raise ValueError("signature_age: a sample unit maps to multiple subjects.")
 
     agg = _aggregate_scores(
         obs,
@@ -1043,18 +1309,27 @@ def main() -> None:
         bootstrap_iterations=bootstrap_iterations,
         bootstrap_ci=bootstrap_ci,
         seed=seed,
+        subject_aware=bool(scfg.get("subject_col")),
+        gee_working_correlation=gee_working_correlation,
+        gee_nonconvergence_fallback=gee_nonconvergence_fallback,
     )
     print(
         "[signature_age] "
         f"computed {len(assoc):,} association tests from "
-        f"{agg['donor_id'].nunique():,} replicates",
+        f"{agg['donor_id'].nunique():,} sample units from "
+        f"{agg['subject_id'].nunique():,} subjects",
         flush=True,
     )
 
     agg = agg.sort_values(["cell_type", "donor_id"]).reset_index(drop=True)
-    grouping_col = str(scfg.get("donor_col", "donor_id"))
-    agg_out = agg.rename(columns={"donor_id": grouping_col})
-    assoc["grouping_id_column"] = grouping_col
+    grouping_col = str(scfg.get("sample_unit_col", scfg.get("donor_col", "donor_id")))
+    subject_col = str(scfg.get("subject_col", grouping_col))
+    if grouping_col == subject_col:
+        agg_out = agg.drop(columns=["subject_id"]).rename(columns={"donor_id": grouping_col})
+    else:
+        agg_out = agg.rename(columns={"donor_id": grouping_col, "subject_id": subject_col})
+    assoc["sample_unit_id_column"] = grouping_col
+    assoc["subject_id_column"] = subject_col
     agg_out.to_csv(args.table_scores, index=False)
     assoc.to_csv(args.table_assoc, index=False)
     if args.table_signature_meta:

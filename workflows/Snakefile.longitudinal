@@ -1,0 +1,299 @@
+from src.utils import load_config
+
+
+CFG = config["cfg_path"]
+RESOLVED_CONFIG = load_config(CFG)
+OUT = RESOLVED_CONFIG["project"]["out_dir"]
+CHECKPOINT = RESOLVED_CONFIG["analysis_checkpoint"]["annotated_h5ad"]
+MAPPING = f"{OUT}/tables/cell_to_longitudinal_units.csv"
+PSEUDOBULK = f"{OUT}/pseudobulk_de"
+SCIENTIFIC_AUDIT = f"{OUT}/validation/scientific_checkpoint_audit.json"
+ANNOTATION_MAPPING = RESOLVED_CONFIG["annotation_qualification"]["mapping_path"]
+ANNOTATION_QUALIFICATION = f"{OUT}/validation/annotation_design_qualification.json"
+ANNOTATION_APPROVAL = f"{OUT}/validation/annotation_design_approved.json"
+AUDIT_STAGES = list(RESOLVED_CONFIG["scientific_audit"]["stage_h5ads"].values())
+REPLICATE_SOURCE = RESOLVED_CONFIG["biological_units"]["source_table_path"]
+
+
+rule all:
+    input:
+        f"{OUT}/tables/longitudinal_unit_audit.json",
+        SCIENTIFIC_AUDIT,
+        ANNOTATION_QUALIFICATION,
+        f"{OUT}/validation/cell_retention.csv",
+        f"{OUT}/validation/annotation_confidence.csv",
+        f"{OUT}/figures/age_celltype_composition_by_bin.png",
+        f"{OUT}/figures/age_celltype_top_trends.png",
+        f"{OUT}/tables/age_celltype_fraction_by_sample_unit.csv",
+        f"{OUT}/tables/age_celltype_trend_stats.csv",
+        f"{OUT}/figures/signature_age_heatmap.png",
+        f"{OUT}/figures/signature_age_top_associations.png",
+        f"{OUT}/tables/signature_scores_by_sample_unit_celltype.csv",
+        f"{OUT}/tables/signature_age_associations.csv",
+        f"{OUT}/figures/age_pred_observed_vs_predicted.png",
+        f"{OUT}/figures/age_pred_mae_by_celltype.png",
+        f"{OUT}/tables/age_pred_cv_predictions.csv",
+        f"{OUT}/tables/age_pred_metrics.csv",
+        f"{OUT}/tables/age_pred_model_comparison_summary.csv",
+        f"{OUT}/sensitivity_age/sensitivity_manifest.csv",
+        f"{OUT}/sensitivity_age/sensitivity_summary.csv",
+        f"{OUT}/sensitivity_age/done.txt",
+        f"{OUT}/figures/supp_age_effect_ci_forest.png",
+        f"{OUT}/figures/supp_age_sensitivity_stability.png",
+        f"{PSEUDOBULK}/technical_validation.json",
+
+
+rule longitudinal_unit_mapping:
+    input:
+        h5ad=CHECKPOINT,
+        source=REPLICATE_SOURCE
+    output:
+        mapping=MAPPING,
+        metadata=f"{OUT}/tables/sample_unit_metadata.csv",
+        audit=f"{OUT}/tables/longitudinal_unit_audit.json"
+    shell:
+        (
+            "python -m src.biological_replicates --config {CFG} "
+            "--inp {input.h5ad} --mapping-out {output.mapping} "
+            "--replicate-metadata-out {output.metadata} "
+            "--audit-out {output.audit}"
+        )
+
+
+rule audit_scientific_checkpoint:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        stages=AUDIT_STAGES
+    output:
+        report=SCIENTIFIC_AUDIT,
+        retention=f"{OUT}/validation/cell_retention.csv",
+        confidence=f"{OUT}/validation/annotation_confidence.csv"
+    shell:
+        (
+            "python -m src.audit_scientific_checkpoint --config {CFG} "
+            "--inp {input.h5ad} --mapping {input.mapping} "
+            "--report {output.report} "
+            "--retention-out {output.retention} "
+            "--confidence-out {output.confidence}"
+        )
+
+
+rule annotation_design_qualification:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT,
+        label_map=ANNOTATION_MAPPING
+    output:
+        report=ANNOTATION_QUALIFICATION,
+        evidence=f"{OUT}/validation/annotation_label_evidence.csv",
+        design=f"{OUT}/validation/annotation_design_eligibility.csv",
+        cluster=f"{OUT}/validation/annotation_cluster_crosstab.csv",
+        marker=f"{OUT}/validation/annotation_marker_summary.csv",
+        raw_marker=f"{OUT}/validation/annotation_raw_label_marker_summary.csv",
+        review_table=f"{OUT}/validation/annotation_mapping_review_table.csv",
+        review=f"{OUT}/validation/annotation_design_review.md"
+    shell:
+        (
+            "python -u -m src.qualify_annotation_design --config {CFG} "
+            "--inp {input.h5ad} --mapping {input.mapping} "
+            "--label-map {input.label_map} --evidence-out {output.evidence} "
+            "--design-out {output.design} --cluster-out {output.cluster} "
+            "--marker-out {output.marker} --raw-marker-out {output.raw_marker} "
+            "--review-table-out {output.review_table} "
+            "--review-out {output.review} "
+            "--report {output.report}"
+        )
+
+
+rule annotation_design_approval:
+    input:
+        report=ANNOTATION_QUALIFICATION,
+        label_map=ANNOTATION_MAPPING
+    output:
+        ANNOTATION_APPROVAL
+    shell:
+        (
+            "python -m src.assert_annotation_qualification "
+            "--report {input.report} --label-map {input.label_map} --out {output}"
+        )
+
+
+rule composition_age_longitudinal:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT,
+        qualification=ANNOTATION_APPROVAL
+    output:
+        fig_composition=f"{OUT}/figures/age_celltype_composition_by_bin.png",
+        fig_trends=f"{OUT}/figures/age_celltype_top_trends.png",
+        table_fraction=f"{OUT}/tables/age_celltype_fraction_by_sample_unit.csv",
+        table_trends=f"{OUT}/tables/age_celltype_trend_stats.csv"
+    shell:
+        (
+            "python -m src.composition_age --config {CFG} --inp {input.h5ad} "
+            "--fig-fractions {output.fig_composition} "
+            "--fig-trends {output.fig_trends} "
+            "--table-donor-fractions {output.table_fraction} "
+            "--table-trends {output.table_trends}"
+        )
+
+
+rule signature_age_longitudinal:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT,
+        qualification=ANNOTATION_APPROVAL
+    output:
+        fig_heatmap=f"{OUT}/figures/signature_age_heatmap.png",
+        fig_top=f"{OUT}/figures/signature_age_top_associations.png",
+        table_scores=f"{OUT}/tables/signature_scores_by_sample_unit_celltype.csv",
+        table_assoc=f"{OUT}/tables/signature_age_associations.csv",
+        table_sigmeta=f"{OUT}/tables/signature_gene_coverage.csv"
+    shell:
+        (
+            "python -m src.signature_age --config {CFG} --inp {input.h5ad} "
+            "--fig-heatmap {output.fig_heatmap} --fig-top {output.fig_top} "
+            "--table-scores {output.table_scores} "
+            "--table-assoc {output.table_assoc} "
+            "--table-signature-meta {output.table_sigmeta}"
+        )
+
+
+rule age_prediction_subject_grouped:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT,
+        qualification=ANNOTATION_APPROVAL
+    output:
+        fig_pred=f"{OUT}/figures/age_pred_observed_vs_predicted.png",
+        fig_mae=f"{OUT}/figures/age_pred_mae_by_celltype.png",
+        table_pred=f"{OUT}/tables/age_pred_cv_predictions.csv",
+        table_metrics=f"{OUT}/tables/age_pred_metrics.csv",
+        table_summary=f"{OUT}/tables/age_pred_model_comparison_summary.csv"
+    shell:
+        (
+            "python -m src.age_prediction --config {CFG} --inp {input.h5ad} "
+            "--fig-pred {output.fig_pred} --fig-mae {output.fig_mae} "
+            "--table-pred {output.table_pred} "
+            "--table-metrics {output.table_metrics} "
+            "--table-summary {output.table_summary}"
+        )
+
+
+rule sensitivity_age_longitudinal:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT,
+        qualification=ANNOTATION_APPROVAL
+    output:
+        manifest=f"{OUT}/sensitivity_age/sensitivity_manifest.csv",
+        summary=f"{OUT}/sensitivity_age/sensitivity_summary.csv",
+        done=f"{OUT}/sensitivity_age/done.txt"
+    shell:
+        (
+            "python -m src.sensitivity_age --config {CFG} --inp {input.h5ad} "
+            "--outdir {OUT}/sensitivity_age --manifest {output.manifest} "
+            "--summary {output.summary} --done {output.done}"
+        )
+
+
+rule supplementary_age_longitudinal:
+    input:
+        composition=f"{OUT}/tables/age_celltype_trend_stats.csv",
+        signature=f"{OUT}/tables/signature_age_associations.csv",
+        sensitivity=f"{OUT}/sensitivity_age/sensitivity_manifest.csv"
+    output:
+        effect=f"{OUT}/figures/supp_age_effect_ci_forest.png",
+        stability=f"{OUT}/figures/supp_age_sensitivity_stability.png"
+    shell:
+        (
+            "python -m src.supplementary_age_plots --config {CFG} "
+            "--table-composition {input.composition} "
+            "--table-signature {input.signature} "
+            "--sensitivity-manifest {input.sensitivity} "
+            "--fig-effect-ci {output.effect} "
+            "--fig-stability {output.stability}"
+        )
+
+
+rule pseudobulk_aggregate_longitudinal:
+    input:
+        h5ad=CHECKPOINT,
+        mapping=MAPPING,
+        audit=SCIENTIFIC_AUDIT,
+        qualification=ANNOTATION_APPROVAL
+    output:
+        matrix=f"{PSEUDOBULK}/pseudobulk_counts.mtx.gz",
+        profiles=f"{PSEUDOBULK}/pseudobulk_profiles.csv",
+        genes=f"{PSEUDOBULK}/pseudobulk_genes.csv",
+        eligibility=f"{PSEUDOBULK}/celltype_eligibility.csv",
+        audit=f"{PSEUDOBULK}/aggregation_audit.json"
+    shell:
+        (
+            "python -u -m src.pseudobulk_aggregate --config {CFG} "
+            "--inp {input.h5ad} --matrix-out {output.matrix} "
+            "--profiles-out {output.profiles} --genes-out {output.genes} "
+            "--eligibility-out {output.eligibility} "
+            "--audit-out {output.audit}"
+        )
+
+
+rule pseudobulk_de_longitudinal:
+    input:
+        matrix=f"{PSEUDOBULK}/pseudobulk_counts.mtx.gz",
+        profiles=f"{PSEUDOBULK}/pseudobulk_profiles.csv",
+        genes=f"{PSEUDOBULK}/pseudobulk_genes.csv",
+        audit=f"{PSEUDOBULK}/aggregation_audit.json"
+    output:
+        combined=f"{PSEUDOBULK}/gene_level_results.csv.gz",
+        sensitivity=f"{PSEUDOBULK}/one_sample_per_subject_results.csv.gz",
+        manifest=f"{PSEUDOBULK}/celltype_result_manifest.csv",
+        diagnostics=f"{PSEUDOBULK}/design_diagnostics.csv",
+        plot=f"{PSEUDOBULK}/dream_diagnostic_plots.pdf",
+        versions=f"{PSEUDOBULK}/runtime_versions.csv",
+        session=f"{PSEUDOBULK}/session_info.txt"
+    log:
+        f"{PSEUDOBULK}/dream.log"
+    shell:
+        (
+            "python -u -m src.run_pseudobulk_dream --config {CFG} "
+            "--matrix {input.matrix} --profiles {input.profiles} "
+            "--genes {input.genes} --combined-out {output.combined} "
+            "--sensitivity-out {output.sensitivity} "
+            "--celltype-dir {PSEUDOBULK}/by_cell_type "
+            "--manifest-out {output.manifest} "
+            "--diagnostics-out {output.diagnostics} "
+            "--plot-out {output.plot} "
+            "--runtime-versions-out {output.versions} "
+            "--session-info-out {output.session} "
+            "--log-out {log}"
+        )
+
+
+rule validate_pseudobulk_de_longitudinal:
+    input:
+        matrix=f"{PSEUDOBULK}/pseudobulk_counts.mtx.gz",
+        profiles=f"{PSEUDOBULK}/pseudobulk_profiles.csv",
+        genes=f"{PSEUDOBULK}/pseudobulk_genes.csv",
+        eligibility=f"{PSEUDOBULK}/celltype_eligibility.csv",
+        audit=f"{PSEUDOBULK}/aggregation_audit.json",
+        combined=f"{PSEUDOBULK}/gene_level_results.csv.gz",
+        sensitivity=f"{PSEUDOBULK}/one_sample_per_subject_results.csv.gz",
+        manifest=f"{PSEUDOBULK}/celltype_result_manifest.csv",
+        diagnostics=f"{PSEUDOBULK}/design_diagnostics.csv",
+        plot=f"{PSEUDOBULK}/dream_diagnostic_plots.pdf",
+        versions=f"{PSEUDOBULK}/runtime_versions.csv",
+        session=f"{PSEUDOBULK}/session_info.txt"
+    output:
+        f"{PSEUDOBULK}/technical_validation.json"
+    shell:
+        (
+            "python -u -m src.validate_pseudobulk_de --config {CFG} "
+            "--outdir {PSEUDOBULK} --report {output}"
+        )

@@ -97,6 +97,90 @@ use mains power and the manufacturer's normal performance profile, and inspect
 temperature and memory with `nvidia-smi` during the first full run. A short
 functional smoke test is preferable to an unnecessary prolonged stress test.
 
+### NumPy Or SciPy Linear Algebra Stalls On Windows
+
+Test the numerical backend independently before attributing a stalled
+qualification or model to the workflow:
+
+```powershell
+python -c "import numpy as np; a=np.array([[1.,2.],[3.,4.]]); print(np.linalg.matrix_rank(a)); print(np.linalg.svd(a, compute_uv=False))"
+```
+
+The qualified GPU profile constrains BLAS/LAPACK 3.9 with MKL 2024.2 and its
+matching Intel OpenMP and TBB runtime. Recreate or update the GPU environment
+from `environment-gpu.yml` if this smoke test hangs. Do not downgrade only MKL
+or use `--no-deps`: a partial transaction can leave incompatible OpenMP or TBB
+libraries. Preserve an explicit environment export before any repair and
+repeat NumPy/SciPy, CPU PyTorch, CUDA, imports, and tests afterwards.
+
+### OpenMP Runtime Conflict On Windows
+
+`OMP Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already
+initialized` means that incompatible OpenMP runtimes were loaded into one
+Python process. Do not set `KMP_DUPLICATE_LIB_OK=TRUE`; it suppresses the guard
+without making the numerical stack coherent.
+
+Inspect the resolved environment before changing it:
+
+```powershell
+conda list -n immune-aging-scvi | Select-String -Pattern "^(mkl|intel-openmp|llvm-openmp|libclang13|numexpr|tbb)\s"
+```
+
+The qualified Windows environment uses MKL 2024.2, Intel OpenMP 2024.2, TBB
+2021.13, `libclang13 22.1.8 default_hf735972_3`, and `numexpr 2.14.1
+mkl_py310h4c4f63a_1`, with no `llvm-openmp` package. Package build strings are
+platform-specific, so they are recorded here rather than imposed on the
+cross-platform environment file. Preview any repair transaction and reject it
+if it removes required scientific packages or upgrades the qualified MKL
+stack. After repair, require NumPy/SciPy linear algebra, NumExpr, statsmodels,
+CPU PyTorch, bounded CUDA, imports, and the test suite to pass.
+
+### Snakemake Stalls Before Parsing On Windows
+
+If `snakemake --list` or a dry-run stalls before reading the Snakefile, capture
+a Python faulthandler trace before rerunning. A trace ending in Snakemake
+`SourceCache` while creating a temporary directory under the user-local cache
+indicates an endpoint-security or cache-permission problem, not a workflow DAG
+failure.
+
+Keep endpoint protection enabled. Permit only the affected user-local
+Snakemake cache path, or use a security-policy-approved cache location if the
+installed Snakemake version supports it. While that platform issue is being
+resolved, run the documented direct modules sequentially from validated
+checkpoints, with explicit inputs, outputs, logs, and timeouts. Do not run the
+direct modules concurrently with Snakemake and do not use a broad antivirus
+exclusion for Python or the repository.
+
+## Windows Cache Permissions
+
+Some Windows endpoint-security configurations allow Python to read the
+scientific environment but block temporary files created by Numba while
+Scanpy is imported. The visible command can then appear to stall before model
+initialization. Keep the security controls enabled and redirect only Numba's
+disposable cache to the ignored workspace directory:
+
+```powershell
+$numbaCache = Join-Path (Resolve-Path ".tmp").Path "numba-cache"
+New-Item -ItemType Directory -Force -Path $numbaCache | Out-Null
+$env:NUMBA_CACHE_DIR = $numbaCache
+python -c "import scanpy, scvi; print(scanpy.__version__, scvi.__version__)"
+```
+
+Set the variable in each new terminal used for Scanpy or scVI. This does not
+change model inputs, parameters, or numerical libraries. Do not solve a cache
+permission failure by disabling antivirus protection globally or by granting
+Python unrestricted filesystem access.
+
+For a stable local environment, the same cache path can be stored as an
+environment-scoped Conda variable. Reactivate the environment after setting it:
+
+```powershell
+conda env config vars set -n immune-aging-scvi "NUMBA_CACHE_DIR=$numbaCache"
+conda deactivate
+conda activate immune-aging-scvi
+python -c "import celltypist; print(celltypist.__version__)"
+```
+
 ## Out-of-memory
 - Do NOT densify neighbor graphs (`.toarray()`).
 - Do NOT store full scVI normalized expression as a dense layer.

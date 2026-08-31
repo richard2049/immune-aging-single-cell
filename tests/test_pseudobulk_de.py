@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 import anndata as ad
@@ -16,13 +17,21 @@ import yaml
 from scipy.io import mmread
 
 from src.pseudobulk_aggregate import (
+    _build_profiles_and_eligibility,
     _integer_sparse_chunk,
+    _replicate_metadata,
+    _validate_pseudobulk_metadata,
     _write_matrix_market_gzip_atomic,
     aggregate_sparse_counts,
     run,
 )
-from src.run_edger import build_command, run_command
-from src.validate_pseudobulk_de import _bh_adjust, _resolve_manifest_path
+from src.run_pseudobulk_dream import build_command, run_command
+from src.validate_pseudobulk_de import (
+    _bh_adjust,
+    _eligible_analysis_sets,
+    _inspect_r_graphics_pdf,
+    _resolve_manifest_path,
+)
 
 
 class PseudobulkDifferentialExpressionTests(unittest.TestCase):
@@ -49,6 +58,27 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
             log_text = log_path.read_text(encoding="utf-8")
             self.assertIn("diagnóstico", log_text)
             self.assertIn("return_code: 0", log_text)
+
+    def test_r_graphics_pdf_integrity_rejects_transcoded_stream(self) -> None:
+        drawing = zlib.compress(b"0 0 m 10 10 l S\n")
+        valid = (
+            b"%PDF-1.4\n"
+            b"1 0 obj\n<< /Type /Page /Contents 2 0 R >>\nendobj\n"
+            + f"2 0 obj\n<< /Length {len(drawing)} /Filter /FlateDecode >>\nstream\n".encode()
+            + drawing
+            + b"\nendstream\nendobj\n%%EOF\n"
+        )
+        with self._temporary_directory() as tmp:
+            valid_path = Path(tmp) / "valid.pdf"
+            valid_path.write_bytes(valid)
+            passed, detail = _inspect_r_graphics_pdf(valid_path, expected_pages=1)
+            self.assertTrue(passed, detail)
+
+            corrupt_path = Path(tmp) / "corrupt.pdf"
+            corrupt_path.write_bytes(valid.replace(drawing[1:2], b"\xef\xbf\xbd", 1))
+            passed, detail = _inspect_r_graphics_pdf(corrupt_path, expected_pages=1)
+            self.assertFalse(passed)
+            self.assertIn("invalid compressed stream", detail)
 
     def test_sparse_aggregation_conserves_profile_counts(self) -> None:
         matrix = sp.csr_matrix(
@@ -77,9 +107,62 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
         np.testing.assert_array_equal(library_sizes, [7, 7])
         self.assertEqual(included_cells, 4)
 
+    def test_nonprimary_cells_are_excluded_without_weakening_metadata_checks(self) -> None:
+        obs = pd.DataFrame(
+            {
+                "sample_unit_id": ["S1", "S1", "S2"],
+                "cell_type_analysis": ["B cells", pd.NA, "CD4 T cells"],
+                "age": [40, 40, 55],
+                "sex": ["F", "F", "M"],
+                "batch": ["B1", "B1", "B2"],
+            }
+        )
+        required = ["sample_unit_id", "cell_type_analysis", "age", "sex", "batch"]
+
+        report = _validate_pseudobulk_metadata(
+            obs,
+            required_columns=required,
+            celltype_col="cell_type_analysis",
+        )
+
+        self.assertEqual(report["analysis_eligible_cells"], 2)
+        self.assertEqual(report["excluded_nonprimary_cells"], 1)
+
+        obs.loc[1, "batch"] = pd.NA
+        with self.assertRaisesRegex(ValueError, "batch=1"):
+            _validate_pseudobulk_metadata(
+                obs,
+                required_columns=required,
+                celltype_col="cell_type_analysis",
+            )
+
     def test_bh_adjustment_matches_known_values(self) -> None:
         observed = _bh_adjust(np.array([0.01, 0.04, 0.03, 0.002]))
         np.testing.assert_allclose(observed, [0.02, 0.04, 0.04, 0.008])
+
+    def test_method_eligibility_preserves_configured_exclusions(self) -> None:
+        contract = {
+            "primary_cell_types": ["A", "B"],
+            "exploratory_cell_types": ["C"],
+        }
+        eligibility = pd.DataFrame(
+            {
+                "cell_type": ["A", "B", "C"],
+                "analysis_tier": ["primary", "primary", "exploratory"],
+                "aggregation_status": ["included", "excluded", "included"],
+                "exclusion_reasons": ["", "insufficient_subjects", ""],
+            }
+        )
+
+        primary, exploratory, valid = _eligible_analysis_sets(contract, eligibility)
+
+        self.assertTrue(valid)
+        self.assertEqual(primary, {"A"})
+        self.assertEqual(exploratory, {"C"})
+
+        eligibility.loc[1, "exclusion_reasons"] = ""
+        _, _, valid = _eligible_analysis_sets(contract, eligibility)
+        self.assertFalse(valid)
 
     def test_manifest_paths_must_be_relative_and_contained(self) -> None:
         with self._temporary_directory() as tmp:
@@ -99,26 +182,83 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fractional"):
             _integer_sparse_chunk(sp.csr_matrix([[1.0, 0.5]]))
 
+    def test_longitudinal_eligibility_counts_independent_subjects(self) -> None:
+        obs = pd.DataFrame(
+            {
+                "sample_unit_id": [f"S{index}" for index in range(1, 7)],
+                "subject_id": ["D1"] * 6,
+                "cell_type": ["A"] * 6,
+                "age": np.arange(30, 36),
+                "sex": ["F"] * 6,
+                "batch": ["X", "Y"] * 3,
+            }
+        )
+        metadata = _replicate_metadata(
+            obs,
+            replicate_col="sample_unit_id",
+            age_col="age",
+            sex_col="sex",
+            batch_col="batch",
+            subject_col="subject_id",
+        )
+        _, eligibility = _build_profiles_and_eligibility(
+            obs,
+            metadata,
+            {
+                "replicate_col": "sample_unit_id",
+                "subject_col": "subject_id",
+                "celltype_col": "cell_type",
+                "min_cells_per_pseudobulk": 1,
+                "min_replicates_per_celltype": 2,
+                "min_subjects_per_celltype": 2,
+                "min_age_span_years": 1,
+                "min_residual_df": 0,
+                "primary_cell_types": ["A"],
+                "exploratory_cell_types": [],
+            },
+        )
+
+        row = eligibility.iloc[0]
+        self.assertEqual(row["n_sample_units_qualifying"], 6)
+        self.assertEqual(row["n_subjects_qualifying"], 1)
+        self.assertEqual(row["aggregation_status"], "excluded")
+        self.assertIn("insufficient_qualifying_subjects", row["exclusion_reasons"])
+
+    def test_subject_sex_conflict_is_rejected(self) -> None:
+        obs = pd.DataFrame(
+            {
+                "sample_unit_id": ["S1", "S2"],
+                "subject_id": ["D1", "D1"],
+                "age": [30, 31],
+                "sex": ["F", "M"],
+                "batch": ["X", "Y"],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "inconsistent across sample units"):
+            _replicate_metadata(
+                obs,
+                replicate_col="sample_unit_id",
+                age_col="age",
+                sex_col="sex",
+                batch_col="batch",
+                subject_col="subject_id",
+            )
+
     def test_bounded_aggregation_writes_auditable_matrix_market(self) -> None:
         with self._temporary_directory() as tmp:
             root = Path(tmp)
             obs = pd.DataFrame(
                 {
-                    "biological_replicate_id": [
-                        "R1",
-                        "R1",
-                        "R2",
-                        "R2",
-                        "R1",
-                        "R2",
-                    ],
-                    "cell_type": ["A", "A", "A", "A", "B", "B"],
-                    "age": [30, 30, 50, 50, 30, 50],
-                    "sex": ["F", "F", "M", "M", "F", "M"],
-                    "batch": ["X", "X", "Y", "Y", "X", "Y"],
-                    "sample_id": ["L1", "L1", "L2", "L2", "L1", "L2"],
+                    "sample_unit_id": [f"S{i}" for i in range(1, 7)] * 2,
+                    "subject_id": ["D1", "D1", "D2", "D3", "D4", "D5"] * 2,
+                    "technical_library_id": [f"L{i}" for i in range(1, 7)] * 2,
+                    "cell_type": ["A"] * 6 + ["B"] * 6,
+                    "age": [30, 31, 40, 50, 60, 70] * 2,
+                    "sex": ["F", "F", "M", "F", "M", "M"] * 2,
+                    "batch": ["X", "Y", "X", "Y", "Y", "X"] * 2,
                 },
-                index=[f"cell_{index}" for index in range(6)],
+                index=[f"cell_{index}" for index in range(12)],
             )
             matrix = sp.csr_matrix(
                 [
@@ -128,6 +268,12 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
                     [1, 1, 0],
                     [2, 2, 2],
                     [3, 0, 1],
+                    [2, 0, 1],
+                    [0, 2, 1],
+                    [3, 1, 0],
+                    [1, 2, 0],
+                    [2, 1, 2],
+                    [4, 0, 1],
                 ],
                 dtype=np.int64,
             )
@@ -139,24 +285,30 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
             ).write_h5ad(h5ad_path)
 
             config = {
-                "biological_replicates": {
-                    "canonical_col": "biological_replicate_id",
+                "biological_units": {
+                    "subject_col": "subject_id",
+                    "subject_source_col": "subject_id",
+                    "sample_unit_col": "sample_unit_id",
+                    "sample_unit_source_col": "sample_unit_id",
+                    "technical_library_col": "technical_library_id",
+                    "technical_library_source_col": "technical_library_id",
                     "strict": True,
                 },
                 "pseudobulk_de": {
                     "count_layer": None,
-                    "replicate_col": "biological_replicate_id",
+                    "replicate_col": "sample_unit_id",
+                    "subject_col": "subject_id",
                     "celltype_col": "cell_type",
                     "age_col": "age",
                     "sex_col": "sex",
                     "batch_col": "batch",
-                    "sample_col": "sample_id",
+                    "sample_col": "technical_library_id",
                     "min_cells_per_pseudobulk": 1,
                     "min_replicates_per_celltype": 2,
                     "min_age_span_years": 10,
                     "min_residual_df": 0,
                     "aggregation_chunk_size": 2,
-                    "primary_formula": "~ sex + batch + age_decade",
+                    "primary_formula": "~ sex + batch + age_decade + (1 | subject_id)",
                     "age_effect_scale": "log2_fold_change_per_10_years",
                     "primary_cell_types": ["A"],
                     "exploratory_cell_types": ["B"],
@@ -190,15 +342,16 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
             profiles = pd.read_csv(outputs["profiles"])
             audit = json.loads(outputs["audit"].read_text(encoding="utf-8"))
 
-            self.assertEqual(pseudobulk.shape, (4, 3))
+            self.assertEqual(pseudobulk.shape, (12, 3))
             np.testing.assert_array_equal(
                 np.asarray(pseudobulk.sum(axis=1)).ravel(),
                 profiles["library_size"].to_numpy(),
             )
             self.assertEqual(int(pseudobulk.sum()), int(matrix.sum()))
             self.assertTrue(audit["count_conservation_passed"])
-            self.assertEqual(audit["n_primary_profiles"], 2)
-            self.assertEqual(audit["n_exploratory_profiles"], 2)
+            self.assertEqual(audit["n_primary_profiles"], 6)
+            self.assertEqual(audit["n_exploratory_profiles"], 6)
+            self.assertEqual(profiles["subject_id"].nunique(), 5)
 
     def test_docker_command_contains_pinned_runtime_contract(self) -> None:
         repository = Path.cwd().resolve()
@@ -207,6 +360,7 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
             "profiles": repository / ".tmp" / "profiles.csv",
             "genes": repository / ".tmp" / "genes.csv",
             "combined_out": repository / ".tmp" / "results.csv.gz",
+            "sensitivity_out": repository / ".tmp" / "sensitivity.csv.gz",
             "celltype_dir": repository / ".tmp" / "by_cell_type",
             "manifest_out": repository / ".tmp" / "manifest.csv",
             "diagnostics_out": repository / ".tmp" / "diagnostics.csv",
@@ -216,17 +370,19 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
         }
         cfg = {
             "pseudobulk_de": {
-                "primary_formula": "~ sex + batch + age_decade",
+                "primary_formula": "~ sex + batch + age_decade + (1 | subject_id)",
                 "min_replicates_per_celltype": 12,
+                "min_subjects_per_celltype": 12,
                 "min_age_span_years": 12,
                 "min_residual_df": 5,
                 "runtime": {
                     "mode": "docker",
                     "docker_context": "desktop-linux",
-                    "docker_image": ("immune-aging-edger:bioc-3.23-edger-4.10.1"),
+                    "docker_image": ("immune-aging-dream:bioc-3.23-dream-1.42.0"),
                     "expected_r_version": "4.6",
                     "expected_bioconductor_version": "3.23",
                     "expected_edger_version": "4.10.1",
+                    "expected_variance_partition_version": "1.42.0",
                 },
             }
         }
@@ -237,27 +393,36 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
             command[:5],
             ["docker", "--context", "desktop-linux", "run", "--rm"],
         )
-        self.assertIn("immune-aging-edger:bioc-3.23-edger-4.10.1", command)
+        self.assertIn("immune-aging-dream:bioc-3.23-dream-1.42.0", command)
         self.assertEqual(
             command[command.index("--expected-edger-version") + 1],
             "4.10.1",
         )
         self.assertEqual(
+            command[command.index("--expected-variance-partition-version") + 1],
+            "1.42.0",
+        )
+        self.assertEqual(
             command[command.index("--primary-formula") + 1],
-            "~ sex + batch + age_decade",
+            "~ sex + batch + age_decade + (1 | subject_id)",
+        )
+        self.assertEqual(command[command.index("--min-subjects") + 1], "12")
+        self.assertEqual(
+            command[command.index("--sensitivity-sample-rule") + 1],
+            "earliest_age_then_sample_id",
         )
 
     @unittest.skipUnless(
-        os.environ.get("RUN_EDGER_DOCKER_TESTS") == "1",
-        "set RUN_EDGER_DOCKER_TESTS=1 to qualify the pinned edgeR runtime",
+        os.environ.get("RUN_DREAM_DOCKER_TESTS") == "1",
+        "set RUN_DREAM_DOCKER_TESTS=1 to qualify the pinned dream runtime",
     )
-    def test_pinned_edger_runtime_on_bounded_fixture(self) -> None:
+    def test_pinned_dream_runtime_on_bounded_fixture(self) -> None:
         with self._temporary_directory() as tmp:
             root = Path(tmp)
             random = np.random.default_rng(17)
-            counts = random.poisson(30, size=(12, 40)).astype(np.int64)
-            counts[:, 0] += np.arange(12, dtype=np.int64) * 4
-            counts[:, 1] += np.arange(11, -1, -1, dtype=np.int64) * 3
+            counts = random.poisson(30, size=(24, 40)).astype(np.int64)
+            counts[:, 0] += np.arange(24, dtype=np.int64) * 4
+            counts[:, 1] += np.arange(23, -1, -1, dtype=np.int64) * 3
             matrix_path = root / "counts.mtx.gz"
             _write_matrix_market_gzip_atomic(
                 sp.csr_matrix(counts),
@@ -266,16 +431,17 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
 
             profiles = pd.DataFrame(
                 {
-                    "profile_id": [f"PB{index:05d}" for index in range(1, 13)],
-                    "biological_replicate_id": [f"R{index:02d}" for index in range(1, 13)],
-                    "cell_type": ["Fixture cells"] * 12,
-                    "age": np.arange(20, 80, 5),
-                    "age_decade": np.arange(20, 80, 5) / 10,
-                    "sex": ["F", "M"] * 6,
-                    "batch": ["B1", "B2", "B3"] * 4,
-                    "analysis_tier": ["primary"] * 12,
-                    "n_cells": [100] * 12,
-                    "n_technical_libraries": [1] * 12,
+                    "profile_id": [f"PB{index:05d}" for index in range(1, 25)],
+                    "sample_unit_id": [f"S{index:02d}" for index in range(1, 25)],
+                    "subject_id": [f"D{((index - 1) // 2) + 1:02d}" for index in range(1, 25)],
+                    "cell_type": ["Fixture cells"] * 24,
+                    "age": np.repeat(np.arange(25, 85, 5), 2) + np.tile([0, 1], 12),
+                    "age_decade": (np.repeat(np.arange(25, 85, 5), 2) + np.tile([0, 1], 12)) / 10,
+                    "sex": np.repeat(["F"] * 6 + ["M"] * 6, 2),
+                    "batch": ["B1", "B2", "B2", "B3"] * 6,
+                    "analysis_tier": ["primary"] * 24,
+                    "n_cells": [100] * 24,
+                    "n_technical_libraries": [1] * 24,
                     "library_size": counts.sum(axis=1),
                 }
             )
@@ -288,17 +454,19 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
 
             config = {
                 "pseudobulk_de": {
-                    "primary_formula": "~ sex + batch + age_decade",
+                    "primary_formula": "~ sex + batch + age_decade + (1 | subject_id)",
                     "min_replicates_per_celltype": 12,
+                    "min_subjects_per_celltype": 12,
                     "min_age_span_years": 12,
                     "min_residual_df": 5,
                     "runtime": {
                         "mode": "docker",
                         "docker_context": "desktop-linux",
-                        "docker_image": ("immune-aging-edger:bioc-3.23-edger-4.10.1"),
+                        "docker_image": ("immune-aging-dream:bioc-3.23-dream-1.42.0"),
                         "expected_r_version": "4.6",
                         "expected_bioconductor_version": "3.23",
                         "expected_edger_version": "4.10.1",
+                        "expected_variance_partition_version": "1.42.0",
                         "timeout_seconds": 300,
                     },
                 }
@@ -308,6 +476,7 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
                 "profiles": profiles_path,
                 "genes": genes_path,
                 "combined_out": root / "results.csv.gz",
+                "sensitivity_out": root / "sensitivity.csv.gz",
                 "celltype_dir": root / "by_cell_type",
                 "manifest_out": root / "manifest.csv",
                 "diagnostics_out": root / "diagnostics.csv",
@@ -320,23 +489,44 @@ class PseudobulkDifferentialExpressionTests(unittest.TestCase):
             run_command(
                 command,
                 repository=Path.cwd().resolve(),
-                log_path=root / "edgeR.log",
+                log_path=root / "dream.log",
                 timeout_seconds=300,
             )
 
             results = pd.read_csv(paths["combined_out"])
+            sensitivity = pd.read_csv(paths["sensitivity_out"])
             diagnostics = pd.read_csv(paths["diagnostics_out"])
             versions = pd.read_csv(paths["runtime_versions_out"])
             self.assertEqual(len(results), 40)
-            self.assertEqual(
-                diagnostics.loc[0, "model_scope"],
-                "adjusted_primary",
-            )
+            self.assertEqual(set(sensitivity["model_scope"]), {"one_sample_per_subject"})
+            for column in (
+                "log2_fc_per_10_years",
+                "moderated_t_statistic",
+                "z_standardized",
+                "p_value",
+                "fdr_within_celltype",
+                "fdr_global",
+            ):
+                self.assertTrue(np.isfinite(results[column]).all(), column)
+            for column in (
+                "log2_fc_per_10_years",
+                "moderated_t_statistic",
+                "p_value",
+                "fdr_within_celltype",
+                "fdr_global",
+            ):
+                self.assertTrue(np.isfinite(sensitivity[column]).all(), column)
+            self.assertEqual(diagnostics.loc[0, "model_scope"], "adjusted_repeated_measures")
             self.assertEqual(
                 versions.loc[versions["component"].eq("edgeR"), "observed"].iloc[0],
                 "4.10.1",
             )
-            self.assertTrue(paths["plot_out"].stat().st_size > 0)
+            self.assertEqual(
+                versions.loc[versions["component"].eq("variancePartition"), "observed"].iloc[0],
+                "1.42.0",
+            )
+            pdf_ok, pdf_detail = _inspect_r_graphics_pdf(paths["plot_out"], expected_pages=1)
+            self.assertTrue(pdf_ok, pdf_detail)
 
 
 if __name__ == "__main__":

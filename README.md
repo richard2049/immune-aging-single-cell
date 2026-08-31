@@ -30,8 +30,8 @@ Stack: `scanpy` + `scvi-tools` + `CellTypist`.
 7. `annotate` (CellTypist) -> `results/06_annotated.h5ad`
 8. `report` -> figures + tables + `results/reports.done`
 9. `composition_age` -> age-stratified composition figures + trend tables
-10. `signature_age` -> donor-level signature trends vs age (figures + stats)
-11. `age_prediction` -> chronological age prediction from donor-celltype scVI embeddings
+10. `signature_age` -> sample-level signature trends with subject-clustered inference
+11. `age_prediction` -> chronological age prediction with subject-grouped cross-validation
 12. `sensitivity_age` -> parameter-sensitivity runs for age analyses
 13. `supplementary_age` -> supplementary summary figures for effect sizes and stability
 
@@ -86,27 +86,35 @@ python -m snakemake -s workflows/Snakefile -c 1 --configfile config/demo.yaml
 
 Run a specific target:
 ```powershell
-python -m snakemake -s workflows/Snakefile -c 1 age_prediction --configfile config/gse164378_pilot.yaml
+python -m snakemake -s workflows/Snakefile -c 1 age_prediction --configfile config/blood_age_atlas_pilot.yaml
 ```
 
 ## Maintenance Rebuilds
 
-The demo command above is a smoke-test path, not a rebuild of the current
-GSE164378 analysis. The maintained one-million-cell result path has two
-sequential stages:
+The demo command above is a smoke-test path, not a rebuild of the Blood Age
+Atlas analysis. The maintained real-data path has two sequential stages:
 
-1. `workflows/Snakefile` creates the one-million-cell annotated checkpoint and provisional
-   outputs under `results/gse164378_full/`.
-2. `workflows/Snakefile.replicate_corrected` reuses that checkpoint and creates
-   the authoritative replicate-corrected outputs under
-   `results/gse164378_full_replicate_corrected/`.
+1. `workflows/Snakefile` reconstructs and validates the one-million-cell scVI
+   checkpoint, creates and validates the clustered checkpoint, and only then
+   runs annotation under `results/blood_age_atlas_1m/`.
+2. `workflows/Snakefile.longitudinal` applies the explicit subject, sample-unit,
+   and technical-library contract and writes downstream outputs under
+   `results/blood_age_atlas_longitudinal/`.
+
+Directories beginning with `results/gse164378` are historical checkpoints from
+before the study-identity correction. They are not output targets and must not
+be overwritten or treated as current evidence.
 
 Run the following from the repository root in an activated
 `immune-aging-scvi` environment. Keep `-c 1` for the conservative memory-safe
 route, do not run the two Snakemake commands concurrently, and ensure Docker
-Desktop is available for the pinned edgeR stages.
+Desktop is available for the pinned `dream` stage.
 
 ```powershell
+$numbaCache = Join-Path (Resolve-Path ".tmp").Path "numba-cache"
+New-Item -ItemType Directory -Force -Path $numbaCache | Out-Null
+$env:NUMBA_CACHE_DIR = $numbaCache
+
 $requiredInputs = @(
     "data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad",
     "data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv"
@@ -119,9 +127,9 @@ foreach ($path in $requiredInputs) {
 }
 
 docker --context desktop-linux image inspect `
-    immune-aging-edger:bioc-3.23-edger-4.10.1 | Out-Null
+    immune-aging-dream:bioc-3.23-dream-1.42.0 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "The pinned edgeR Docker image is unavailable."
+    throw "The pinned dream Docker image is unavailable."
 }
 
 $logDir = "results/logs"
@@ -135,24 +143,68 @@ try {
     python -m snakemake `
         -s workflows/Snakefile `
         -c 1 `
-        --configfile config/gse164378_1m.yaml `
+        scvi_train `
+        --configfile config/blood_age_atlas_1m.yaml `
         --rerun-incomplete `
         --printshellcmds
 
     if ($LASTEXITCODE -ne 0) {
-        throw "The one-million-cell workflow failed; do not run the corrected stage."
+        throw "scVI reconstruction failed; do not continue."
+    }
+
+    python -m src.validate_scvi_checkpoint `
+        --config config/blood_age_atlas_1m.yaml `
+        --inp results/blood_age_atlas_1m/03_nodoublets.h5ad `
+        --checkpoint results/blood_age_atlas_1m/04_scvi.h5ad `
+        --report results/blood_age_atlas_1m/validation/04_scvi_checkpoint.json
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "The scVI checkpoint gate failed; do not run clustering."
     }
 
     python -m snakemake `
-        -s workflows/Snakefile.replicate_corrected `
+        -s workflows/Snakefile `
         -c 1 `
-        all pseudobulk_robustness_evidence `
-        --configfile config/gse164378_corrected.yaml `
+        cluster `
+        --configfile config/blood_age_atlas_1m.yaml `
         --rerun-incomplete `
         --printshellcmds
 
     if ($LASTEXITCODE -ne 0) {
-        throw "The replicate-corrected workflow failed."
+        throw "Clustering failed; do not run annotation."
+    }
+
+    python -m src.validate_cluster_checkpoint `
+        --config config/blood_age_atlas_1m.yaml `
+        --inp results/blood_age_atlas_1m/04_scvi.h5ad `
+        --checkpoint results/blood_age_atlas_1m/05_clustered.h5ad `
+        --report results/blood_age_atlas_1m/validation/05_cluster_checkpoint.json
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "The clustered checkpoint gate failed; do not run annotation."
+    }
+
+    python -m snakemake `
+        -s workflows/Snakefile `
+        -c 1 `
+        annotate `
+        --configfile config/blood_age_atlas_1m.yaml `
+        --rerun-incomplete `
+        --printshellcmds
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Annotation failed; do not run the longitudinal stage."
+    }
+
+    python -m snakemake `
+        -s workflows/Snakefile.longitudinal `
+        -c 1 `
+        --configfile config/blood_age_atlas_longitudinal.yaml `
+        --rerun-incomplete `
+        --printshellcmds
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "The longitudinal workflow failed."
     }
 }
 finally {
@@ -160,18 +212,45 @@ finally {
 }
 ```
 
-The explicit `pseudobulk_robustness_evidence` target extends the corrected
-workflow's default `all` target through pseudobulk aggregation, edgeR modeling,
-technical validation, sensitivity models, and bounded evidence preparation.
-Snakemake normally reruns only incomplete or out-of-date jobs. Add `--forceall`
-to both commands only for a deliberate complete recomputation, including scVI
-training and annotation.
+The workspace-scoped Numba cache avoids writes to protected environment or
+user-cache directories on Windows. It contains disposable compiled cache
+files only and is excluded from version control. See
+[`docs/troubleshooting.md`](docs/troubleshooting.md#windows-cache-permissions)
+if Scanpy or scVI stalls during import.
 
-Run only the second Snakemake command when
-`results/gse164378_full/06_annotated.h5ad` has passed the configured scientific
-checkpoint audit. After either route, inspect validation reports and
-`git diff -- docs`; do not publish regenerated reports or claims without the
-required scientific review.
+The longitudinal `all` target includes unit mapping, scientific checkpoint
+audit, outcome-blind annotation and design qualification, subject-aware
+composition and signature models, subject-grouped age prediction, pseudobulk
+aggregation, `dream` repeated-measures inference, the pre-specified
+one-sample-per-subject sensitivity, and technical validation.
+Snakemake normally reruns only incomplete or out-of-date jobs. Do not use
+`--forceall` when rebuilding checkpoints because it would recompute stages
+outside the intended scope.
+
+Before the first inferential run, generate only the review evidence:
+
+```powershell
+python -m snakemake `
+    -s workflows/Snakefile.longitudinal `
+    -c 1 `
+    annotation_design_qualification `
+    --configfile config/blood_age_atlas_longitudinal.yaml `
+    --printshellcmds
+```
+
+Follow the human-review procedure in
+[`docs/annotation_mapping_review_guide.md`](docs/annotation_mapping_review_guide.md).
+Use `docs/reviews/annotation_mapping_review.yml` to record conclusions and the
+generated `validation/annotation_mapping_review_table.csv` as the compact
+evidence index. The full workflow stops until every mapping row has been
+reviewed and the generated approval file matches both the mapping and its
+qualification report.
+
+Run the longitudinal workflow only after the reconstructed scVI and clustered
+checkpoint gates pass and `results/blood_age_atlas_1m/06_annotated.h5ad` is
+complete. Its first rules run the configured scientific checkpoint audit and
+annotation qualification. Inspect all validation reports and do not publish
+regenerated results or claims without independent scientific review.
 
 ## Validation
 Use the project conda environment before running workflow checks. The tracked
@@ -185,7 +264,7 @@ python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/demo.yaml
 
 GitHub Actions applies the same Ruff and compilation checks, runs the unit-test
 suite in the tracked scientific environment, and constructs the demo workflow
-DAG. Docker-qualified edgeR tests, real-data execution, and full analysis runs
+DAG. Docker-qualified `dream` tests, real-data execution, and full analysis runs
 remain explicit validation steps outside routine CI. A passing CI run confirms
 the automated technical checks only; it does not establish biological validity.
 
@@ -204,24 +283,27 @@ The optional GPU profile is not exercised by GitHub Actions because hosted and
 local GPU drivers are machine-specific. Its scientific Python versions match
 the CPU contract, while the PyTorch backend is qualified separately.
 
-## GSE164378 Requalification Status
+## Blood Age Atlas Analysis Status
 
-The one-million-cell workflow and donor-aware pseudobulk implementation remain
-available, but numerical examples and curated result figures are temporarily
-withheld from the main project presentation. A safeguards audit found that the
-historical annotated checkpoint predates the current scVI, clustering, and
-CellTypist provenance records. The composition workflow also now restores
-zero-abundance replicate-cell-type combinations explicitly.
+The analysed study is the Terekhova et al. Blood Age Atlas distributed through
+Synapse as `syn49637038`, not GEO accession `GSE164378`. Source metadata describe
+317 sample units from 166 people. The workflow assigns distinct roles to
+`subject_id` (`Donor_id`), `sample_unit_id` (`Tube_id`), and
+`technical_library_id` (`File_name`).
 
-The checkpoint and all affected downstream outputs must therefore be rebuilt,
-technically validated, and reviewed before any association, prediction metric,
-gene, pathway, or figure is presented as a current result. This status does not
-establish that earlier result directions were incorrect; it means that they do
-not yet satisfy the current reproducibility and acceptance contract.
+Earlier downstream outputs referred to the study by the wrong accession and
+treated repeated samples from the same person as independent observations.
+They are retained for provenance only and are not used in the current analyses
+or figures. Updated results must come from rebuilt checkpoints, pass the
+repository's technical validation checks, and undergo scientific review.
 
-The accepted biological replicate remains source `Tube_id`, exposed as
-`biological_replicate_id`. Gene-level pseudobulk interpretation remains pending
-and no gene- or pathway-level claim is approved.
+Composition and signature models account for repeated samples from the same
+person, and prediction folds are grouped by subject. Because scVI is fitted to
+the full cohort before cross-validation, prediction performance represents
+internal, transductive validation rather than evaluation in a wholly unseen
+cohort. Pseudobulk inference uses a subject random intercept and a separate,
+deterministic one-sample-per-subject sensitivity. Biological interpretation of
+gene, pathway, and cell-population results is still pending.
 
 ## Report Outputs
 Generated by `src/report.py`:
@@ -236,13 +318,13 @@ Generated by `src/report.py`:
 Generated by `src/composition_age.py`:
 - `results/figures/age_celltype_composition_by_bin.png`
 - `results/figures/age_celltype_top_trends.png`
-- `results/tables/age_celltype_fraction_by_donor.csv`
+- `results/tables/age_celltype_fraction_by_sample_unit.csv`
 - `results/tables/age_celltype_trend_stats.csv`
 
 Generated by `src/signature_age.py`:
 - `results/figures/signature_age_heatmap.png`
 - `results/figures/signature_age_top_associations.png`
-- `results/tables/signature_scores_by_donor_celltype.csv`
+- `results/tables/signature_scores_by_sample_unit_celltype.csv`
 - `results/tables/signature_age_associations.csv`
 - `results/tables/signature_gene_coverage.csv`
 
@@ -253,7 +335,8 @@ Generated by `src/age_prediction.py`:
 - `results/tables/age_pred_metrics.csv`
 - `results/tables/age_pred_model_comparison_summary.csv`
   - `age_pred_metrics.csv` compares candidate models under identical
-    donor-grouped cross-validation folds.
+    subject-grouped cross-validation folds and subject-clustered bootstrap
+    intervals.
   - `age_pred_model_comparison_summary.csv` adds fold-level winner counts and bootstrap CI for paired MAE deltas vs best Ridge.
 
 Generated by `src/sensitivity_age.py`:
@@ -273,8 +356,8 @@ Copy-Item config/custom.example.yaml config/custom.local.yaml
 ```
 
 Set `cfg_path: config/custom.local.yaml`, then review the input path, metadata
-schema, biological-replicate field, covariates, thresholds, and output
-directory. The tracked GSE164378 profiles record fixed study runs and are not
+schema, subject/sample/library fields, covariates, thresholds, and output
+directory. The tracked Blood Age Atlas profiles record fixed study runs and are not
 generic templates.
 
 Detailed schema and ingestion notes are in `docs/real_data.md`; profile roles
@@ -286,8 +369,8 @@ and inheritance are documented in `docs/configuration.md`.
   `environment-gpu.yml` can run those same profiles on CPU or a locally
   qualified NVIDIA GPU.
 - Large data files and `results/` are gitignored.
-- Use `config/gse164378_pilot.yaml` for the bounded 50,000-cell GSE164378
-  smoke run and `config/gse164378_1m.yaml` for the accepted one-million-cell
+- Use `config/blood_age_atlas_pilot.yaml` for the bounded 50,000-cell Blood Age
+  Atlas smoke run and `config/blood_age_atlas_1m.yaml` for the one-million-cell
   checkpoint. An uncapped analysis is not currently a tracked run profile.
 - Store figures referenced by the README under `docs/assets/`
   (`.png/.jpg/.jpeg/.webp`).

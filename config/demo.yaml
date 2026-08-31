@@ -54,10 +54,54 @@ scvi:
   # Use "gpu" only after installing a CUDA-enabled PyTorch build.
   accelerator: cpu
   devices: 1
+  model_args:
+    n_hidden: 128
+    n_latent: 10
+    n_layers: 1
+    dropout_rate: 0.1
+    dispersion: gene
+    gene_likelihood: zinb
+    use_observed_lib_size: true
+    latent_distribution: normal
+  training_args:
+    max_epochs: 400
+    batch_size: 128
+    early_stopping: false
+    train_size: 0.9
+    validation_size: null
+    shuffle_set_split: true
+    load_sparse_tensor: false
 
 clustering:
+  n_jobs: 1
   use_rep: X_scVI
   leiden_resolution: 0.8
+  neighbors_args:
+    n_neighbors: 15
+    n_pcs: null
+    knn: true
+    method: umap
+    transformer: null
+    metric: euclidean
+    metric_kwds: {}
+  umap_args:
+    min_dist: 0.5
+    spread: 1.0
+    n_components: 2
+    maxiter: null
+    alpha: 1.0
+    gamma: 1.0
+    negative_sample_rate: 5
+    init_pos: spectral
+    a: null
+    b: null
+    method: umap
+  leiden_args:
+    directed: null
+    use_weights: true
+    n_iterations: 2
+    neighbors_key: null
+    flavor: leidenalg
 
 celltypist:
   model: Immune_All_Low.pkl

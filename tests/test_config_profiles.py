@@ -5,15 +5,17 @@ from pathlib import Path
 
 import yaml
 
+from src.cluster import _required_clustering_arguments
+from src.scvi_train import _required_arguments
 from src.utils import load_config
 
 CONFIG_DIR = Path("config")
 SUPPORTED_PROFILES = (
+    Path("config/blood_age_atlas_1m.yaml"),
+    Path("config/blood_age_atlas_longitudinal.yaml"),
+    Path("config/blood_age_atlas_pilot.yaml"),
     Path("config/custom.example.yaml"),
     Path("config/demo.yaml"),
-    Path("config/gse164378_1m.yaml"),
-    Path("config/gse164378_corrected.yaml"),
-    Path("config/gse164378_pilot.yaml"),
 )
 
 
@@ -56,35 +58,93 @@ class ConfigProfileContractTests(unittest.TestCase):
                 expected = path == Path("config/demo.yaml")
                 self.assertIs(config["run"]["allow_placeholder_outputs"], expected)
 
-    def test_gse164378_pilot_is_bounded_and_separate(self) -> None:
-        config = load_config("config/gse164378_pilot.yaml")
+    def test_scvi_execution_parameters_are_explicit(self) -> None:
+        for path in SUPPORTED_PROFILES:
+            with self.subTest(path=path):
+                config = load_config(path)
+                model_args, training_args = _required_arguments(config["scvi"])
+                self.assertGreater(int(model_args["n_latent"]), 0)
+                self.assertGreater(int(training_args["max_epochs"]), 0)
+
+    def test_clustering_execution_parameters_are_explicit(self) -> None:
+        for path in SUPPORTED_PROFILES:
+            with self.subTest(path=path):
+                config = load_config(path)
+                neighbors, umap, leiden = _required_clustering_arguments(config["clustering"])
+                self.assertEqual(int(config["clustering"]["n_jobs"]), 1)
+                self.assertGreater(int(neighbors["n_neighbors"]), 0)
+                self.assertEqual(int(umap["n_components"]), 2)
+                self.assertEqual(str(leiden["flavor"]), "leidenalg")
+                self.assertEqual(int(leiden["n_iterations"]), 2)
+
+    def test_incomplete_clustering_contract_fails(self) -> None:
+        with self.assertRaisesRegex(KeyError, "clustering execution contract"):
+            _required_clustering_arguments({"neighbors_args": {"n_neighbors": 15}})
+
+    def test_blood_age_atlas_pilot_is_bounded_and_separate(self) -> None:
+        config = load_config("config/blood_age_atlas_pilot.yaml")
         self.assertEqual(config["run"]["max_cells"], 50_000)
-        self.assertEqual(config["project"]["out_dir"], "results/gse164378_pilot")
+        self.assertEqual(config["project"]["out_dir"], "results/blood_age_atlas_pilot")
+        self.assertEqual(config["study"]["synapse_accession"], "syn49637038")
 
-    def test_gse164378_1m_preserves_accepted_cell_cap(self) -> None:
-        config = load_config("config/gse164378_1m.yaml")
+    def test_blood_age_atlas_1m_preserves_accepted_cell_cap(self) -> None:
+        config = load_config("config/blood_age_atlas_1m.yaml")
         self.assertEqual(config["run"]["max_cells"], 1_000_000)
-        self.assertEqual(config["project"]["out_dir"], "results/gse164378_full")
+        self.assertEqual(config["project"]["out_dir"], "results/blood_age_atlas_1m")
+        self.assertEqual(config["biological_units"]["subject_col"], "donor_id")
+        self.assertEqual(config["biological_units"]["sample_unit_col"], "tube_id")
+        self.assertEqual(config["age_prediction"]["group_col"], "donor_id")
 
-    def test_corrected_profile_preserves_replicate_contract(self) -> None:
-        raw = _read_raw(Path("config/gse164378_corrected.yaml"))
-        self.assertEqual(raw["extends"], "gse164378_1m.yaml")
+    def test_longitudinal_profile_preserves_unit_contract(self) -> None:
+        raw = _read_raw(Path("config/blood_age_atlas_longitudinal.yaml"))
+        self.assertEqual(raw["extends"], "blood_age_atlas_1m.yaml")
 
-        config = load_config("config/gse164378_corrected.yaml")
+        config = load_config("config/blood_age_atlas_longitudinal.yaml")
         self.assertEqual(
             config["analysis_checkpoint"]["annotated_h5ad"],
-            "results/gse164378_full/06_annotated.h5ad",
+            "results/blood_age_atlas_1m/06_annotated.h5ad",
         )
         self.assertEqual(
             config["project"]["out_dir"],
-            "results/gse164378_full_replicate_corrected",
+            "results/blood_age_atlas_longitudinal",
         )
-        for section in ("composition_age", "signature_age", "age_prediction"):
-            self.assertEqual(config[section]["donor_col"], "biological_replicate_id")
+        for section in ("composition_age", "signature_age"):
+            self.assertEqual(config[section]["sample_unit_col"], "sample_unit_id")
+            self.assertEqual(config[section]["subject_col"], "subject_id")
+            self.assertEqual(config[section]["celltype_col"], "cell_type_analysis")
+        self.assertEqual(
+            config["composition_age"]["denominator"],
+            "all_qc_passed_cells_with_other_unresolved",
+        )
+        self.assertEqual(
+            config["composition_age"]["other_unresolved_label"],
+            "Other/unresolved",
+        )
+        self.assertEqual(
+            config["signature_age"]["gee_working_correlation"],
+            "exchangeable",
+        )
+        self.assertEqual(
+            config["signature_age"]["gee_nonconvergence_fallback"],
+            "independence",
+        )
+        self.assertEqual(config["age_prediction"]["group_col"], "subject_id")
+        self.assertEqual(
+            config["age_prediction"]["celltype_col"],
+            "cell_type_analysis",
+        )
         self.assertEqual(
             config["pseudobulk_de"]["replicate_col"],
-            "biological_replicate_id",
+            "sample_unit_id",
         )
+        self.assertEqual(config["pseudobulk_de"]["subject_col"], "subject_id")
+        self.assertEqual(
+            config["pseudobulk_de"]["celltype_col"],
+            "cell_type_analysis",
+        )
+        self.assertEqual(config["pseudobulk_de"]["min_subjects_per_celltype"], 12)
+        self.assertTrue(config["annotation_qualification"]["enabled"])
+        self.assertTrue(config["annotation_qualification"]["require_approved_mapping"])
 
     def test_custom_example_uses_safe_generic_identity_and_paths(self) -> None:
         config = load_config("config/custom.example.yaml")

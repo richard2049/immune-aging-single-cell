@@ -9,7 +9,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .annotation_mapping import attach_analysis_cell_types
 from .biological_replicates import attach_biological_replicates
+from .longitudinal_stats import (
+    fit_independent_age_model,
+    fit_subject_aware_gee,
+    select_one_sample_per_subject,
+)
 from .plot_style import (
     PALETTE,
     apply_publication_style,
@@ -19,6 +25,7 @@ from .plot_style import (
     style_axis,
 )
 from .scientific_guardrails import (
+    NonEstimableDesignError,
     build_complete_nuisance_design,
     require_placeholder_permission,
     residualize_complete,
@@ -26,6 +33,9 @@ from .scientific_guardrails import (
     validate_replicate_covariates,
 )
 from .utils import ensure_dir, load_config
+
+ALL_QC_DENOMINATOR = "all_qc_passed_cells_with_other_unresolved"
+PRIMARY_ONLY_DENOMINATOR = "primary_mapped_cells_only_with_explicit_label"
 
 
 def _save_placeholder(path: Path, title: str, message: str, dpi: int) -> None:
@@ -127,6 +137,60 @@ def _resolve_covariate_cols(columns: list[str], cfg: dict) -> list[str]:
     )
 
 
+def _resolve_composition_cell_types(
+    obs: pd.DataFrame,
+    cfg: dict,
+    *,
+    celltype_col: str,
+) -> tuple[pd.Series, dict[str, object]]:
+    ccfg = cfg.get("composition_age", {})
+    denominator = str(ccfg.get("denominator", PRIMARY_ONLY_DENOMINATOR))
+    if denominator not in {ALL_QC_DENOMINATOR, PRIMARY_ONLY_DENOMINATOR}:
+        raise ValueError(f"Unsupported composition denominator: {denominator}")
+
+    labels = obs[celltype_col].astype("string").str.strip()
+    labels = labels.mask(labels.eq(""))
+    metadata: dict[str, object] = {
+        "composition_denominator": denominator,
+        "denominator_only_labels": [],
+    }
+    if denominator == PRIMARY_ONLY_DENOMINATOR:
+        return labels, metadata
+
+    annotation = cfg.get("annotation_qualification", {})
+    if not isinstance(annotation, dict) or not bool(annotation.get("enabled", False)):
+        raise RuntimeError(f"{ALL_QC_DENOMINATOR} requires enabled annotation qualification.")
+    disposition_col = str(annotation.get("disposition_col", "cell_type_analysis_disposition"))
+    if disposition_col not in obs.columns:
+        raise KeyError(
+            f"Composition denominator requires annotation disposition column {disposition_col!r}."
+        )
+    disposition = obs[disposition_col].astype("string").str.strip()
+    valid_dispositions = {"primary", "exploratory", "unresolved"}
+    invalid = sorted(set(disposition.dropna().astype(str)).difference(valid_dispositions))
+    if disposition.isna().any() or disposition.eq("").any() or invalid:
+        raise ValueError(
+            "Composition denominator contains missing or invalid annotation dispositions: "
+            f"{invalid}"
+        )
+
+    primary = disposition.eq("primary")
+    if labels.loc[primary].isna().any():
+        raise ValueError("Primary annotation rows contain missing analysis labels.")
+    other_label = str(ccfg.get("other_unresolved_label", "Other/unresolved")).strip()
+    if not other_label:
+        raise ValueError("composition_age.other_unresolved_label must be non-empty.")
+    if labels.loc[primary].eq(other_label).any():
+        raise ValueError(
+            f"Primary analysis labels collide with denominator-only label {other_label!r}."
+        )
+
+    resolved = labels.where(primary, other_label)
+    metadata["denominator_only_labels"] = [other_label]
+    metadata["nonprimary_cells_in_denominator"] = int((~primary).sum())
+    return resolved, metadata
+
+
 def _prepare_xy_for_stats(
     g: pd.DataFrame,
     covariate_cols: list[str],
@@ -148,22 +212,33 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
     ccfg = cfg.get("composition_age", {})
     adata = ad.read_h5ad(inp_h5ad, backed="r")
     attach_biological_replicates(adata, cfg)
+    attach_analysis_cell_types(adata, cfg)
     obs = adata.obs.copy()
     adata.file.close()
 
     all_cols = list(obs.columns)
     cfg_age_col = ccfg.get("age_col")
-    cfg_donor_col = ccfg.get("donor_col")
+    configured_sample_unit_col = ccfg.get("sample_unit_col")
+    configured_subject_col = ccfg.get("subject_col")
+    cfg_donor_col = configured_sample_unit_col or ccfg.get("donor_col")
+    cfg_subject_col = configured_subject_col or cfg_donor_col
     cfg_celltype_col = ccfg.get("celltype_col")
 
     age_col = cfg_age_col if cfg_age_col in obs.columns else _first_existing(all_cols, ["age"])
-    donor_col = (
-        cfg_donor_col
-        if cfg_donor_col in obs.columns
-        else _first_existing(
-            all_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
+    if configured_sample_unit_col and cfg_donor_col not in obs.columns:
+        donor_col = None
+    else:
+        donor_col = (
+            cfg_donor_col
+            if cfg_donor_col in obs.columns
+            else _first_existing(
+                all_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
+            )
         )
-    )
+    if configured_subject_col and cfg_subject_col not in obs.columns:
+        subject_col = None
+    else:
+        subject_col = cfg_subject_col if cfg_subject_col in obs.columns else donor_col
     celltype_col = (
         cfg_celltype_col
         if cfg_celltype_col in obs.columns
@@ -175,24 +250,38 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
     required = {
         "age_col": age_col,
         "donor_col": donor_col,
+        "subject_col": subject_col,
         "celltype_col": celltype_col,
     }
     covariate_cols = _resolve_covariate_cols(all_cols, cfg)
     required["covariate_cols"] = covariate_cols
-    if age_col is None or donor_col is None or celltype_col is None:
+    if age_col is None or donor_col is None or subject_col is None or celltype_col is None:
         return pd.DataFrame(), required
 
-    keep_cols = [age_col, donor_col, celltype_col] + [
-        c for c in covariate_cols if c not in {age_col, donor_col, celltype_col}
-    ]
-    out = obs[keep_cols].copy()
-    out = out.rename(columns={age_col: "age", donor_col: "donor_id", celltype_col: "cell_type"})
+    cell_types, denominator_metadata = _resolve_composition_cell_types(
+        obs,
+        cfg,
+        celltype_col=celltype_col,
+    )
+    required.update(denominator_metadata)
+
+    out = pd.DataFrame(
+        {
+            "age": obs[age_col],
+            "donor_id": obs[donor_col],
+            "subject_id": obs[subject_col],
+            "cell_type": cell_types,
+            **{column: obs[column] for column in covariate_cols},
+        },
+        index=obs.index,
+    )
     out["age"] = pd.to_numeric(out["age"], errors="coerce")
-    for column in ("donor_id", "cell_type"):
+    for column in ("donor_id", "subject_id", "cell_type"):
         out[column] = out[column].astype("string").str.strip()
         out[column] = out[column].mask(out[column].eq(""))
-    out = out.dropna(subset=["age", "donor_id", "cell_type"])
+    out = out.dropna(subset=["age", "donor_id", "subject_id", "cell_type"])
     out["donor_id"] = out["donor_id"].astype(str)
+    out["subject_id"] = out["subject_id"].astype(str)
     out["cell_type"] = out["cell_type"].astype(str)
     validate_replicate_covariates(
         out,
@@ -200,14 +289,45 @@ def _prepare_obs(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
         covariate_cols=covariate_cols,
         context="composition_age",
     )
+    subject_counts = out.groupby("donor_id", observed=False)["subject_id"].nunique()
+    if bool(subject_counts.gt(1).any()):
+        raise ValueError("composition_age: a sample unit maps to multiple subjects.")
     return out, required
 
 
-def _build_donor_fraction_table(
-    obs: pd.DataFrame, min_cells_per_donor: int, covariate_cols: list[str]
+def _ensure_subject_identity(
+    frame: pd.DataFrame,
+    *,
+    require_explicit: bool,
 ) -> pd.DataFrame:
+    if "donor_id" not in frame.columns:
+        raise KeyError("Composition input is missing the sample-unit column 'donor_id'.")
+    if "subject_id" not in frame.columns:
+        if require_explicit:
+            raise KeyError(
+                "Subject-aware composition analysis requires an explicit 'subject_id' column."
+            )
+        frame = frame.copy()
+        frame["subject_id"] = frame["donor_id"]
+
+    if frame[["donor_id", "subject_id"]].isna().any(axis=None):
+        raise ValueError("Composition input contains missing sample-unit or subject identifiers.")
+    subject_counts = frame.groupby("donor_id", observed=False)["subject_id"].nunique()
+    if bool(subject_counts.ne(1).any()):
+        raise ValueError("Composition input maps a sample unit to multiple subjects.")
+    return frame
+
+
+def _build_donor_fraction_table(
+    obs: pd.DataFrame,
+    min_cells_per_donor: int,
+    covariate_cols: list[str],
+    require_subject_id: bool = False,
+) -> pd.DataFrame:
+    obs = _ensure_subject_identity(obs, require_explicit=require_subject_id)
     agg_map: dict[str, tuple[str, str | callable]] = {
         "age": ("age", "median"),
+        "subject_id": ("subject_id", _mode_or_na),
         "total_cells": ("cell_type", "size"),
     }
     for c in covariate_cols:
@@ -218,7 +338,15 @@ def _build_donor_fraction_table(
     totals = totals[totals["total_cells"] >= min_cells_per_donor].reset_index()
     if totals.empty:
         return pd.DataFrame(
-            columns=["donor_id", "age", "cell_type", "n_cells", "total_cells", "fraction"]
+            columns=[
+                "donor_id",
+                "subject_id",
+                "age",
+                "cell_type",
+                "n_cells",
+                "total_cells",
+                "fraction",
+            ]
         )
 
     kept = obs[obs["donor_id"].isin(totals["donor_id"])]
@@ -239,7 +367,7 @@ def _build_donor_fraction_table(
     if not np.allclose(fraction_sums.to_numpy(dtype=float), 1.0, atol=1e-12):
         raise RuntimeError("Donor-level cell-type fractions do not sum to one.")
     keep = (
-        ["donor_id", "age"]
+        ["donor_id", "subject_id", "age"]
         + [c for c in covariate_cols if c in out.columns]
         + ["cell_type", "n_cells", "total_cells", "fraction"]
     )
@@ -254,13 +382,30 @@ def _compute_trends(
     bootstrap_iterations: int,
     bootstrap_ci: float,
     seed: int,
+    subject_aware: bool = False,
 ) -> pd.DataFrame:
+    donor_fraction = _ensure_subject_identity(
+        donor_fraction,
+        require_explicit=subject_aware,
+    )
+    selected_sample_units = (
+        select_one_sample_per_subject(
+            donor_fraction,
+            subject_col="subject_id",
+            sample_col="donor_id",
+        )
+        if subject_aware
+        else set()
+    )
     rows: list[dict] = []
     adjusted_for = ",".join(covariate_cols) if (adjust_covariates and covariate_cols) else ""
     for i, (ct, g) in enumerate(donor_fraction.groupby("cell_type", observed=False)):
         n_donors = int(g["donor_id"].nunique())
         n_donors_detected = int(g.loc[g["n_cells"].gt(0), "donor_id"].nunique())
-        if n_donors_detected < min_donors_per_celltype:
+        n_subjects = int(g["subject_id"].nunique())
+        n_subjects_detected = int(g.loc[g["n_cells"].gt(0), "subject_id"].nunique())
+        support_count = n_subjects_detected if subject_aware else n_donors_detected
+        if support_count < min_donors_per_celltype:
             continue
         x, y, used_adjustment = _prepare_xy_for_stats(
             g, covariate_cols=covariate_cols, adjust_covariates=adjust_covariates
@@ -276,11 +421,53 @@ def _compute_trends(
             ci=bootstrap_ci,
             seed=seed + (i * 97),
         )
+        model = None
+        sensitivity_model = None
+        sensitivity_status = "not_applicable"
+        sensitivity_reason = ""
+        sensitivity_n_subjects = 0
+        if subject_aware:
+            model = fit_subject_aware_gee(
+                g,
+                outcome_col="fraction",
+                subject_col="subject_id",
+                covariate_cols=covariate_cols if adjust_covariates else [],
+                family="binomial",
+                weights_col="total_cells",
+                context=f"composition trend for {ct!r}",
+            )
+            sensitivity = g[g["donor_id"].isin(selected_sample_units)].copy()
+            sensitivity_n_subjects = int(sensitivity["subject_id"].nunique())
+            sensitivity_n_detected = int(
+                sensitivity.loc[sensitivity["n_cells"].gt(0), "subject_id"].nunique()
+            )
+            if sensitivity_n_detected >= min_donors_per_celltype:
+                try:
+                    sensitivity_model = fit_independent_age_model(
+                        sensitivity,
+                        outcome_col="fraction",
+                        covariate_cols=covariate_cols if adjust_covariates else [],
+                        family="binomial",
+                        weights_col="total_cells",
+                        context=f"one-sample composition sensitivity for {ct!r}",
+                    )
+                    sensitivity_status = "completed"
+                except NonEstimableDesignError as error:
+                    sensitivity_status = "non_estimable_rank_deficient"
+                    sensitivity_reason = str(error)
+            else:
+                sensitivity_status = "insufficient_detected_subjects"
+                sensitivity_reason = (
+                    f"n_detected_subjects={sensitivity_n_detected}; "
+                    f"required={min_donors_per_celltype}"
+                )
         rows.append(
             {
                 "cell_type": ct,
                 "n_donors": n_donors,
                 "n_donors_detected": n_donors_detected,
+                "n_subjects": n_subjects,
+                "n_subjects_detected": n_subjects_detected,
                 "mean_fraction": float(g["fraction"].mean()),
                 "spearman_rho": float(rho),
                 "spearman_pvalue": float(p),
@@ -296,10 +483,47 @@ def _compute_trends(
                 "slope_per_10y_ci_high": float(ci_stats["slope_per_year_ci_high"] * 10.0)
                 if np.isfinite(ci_stats["slope_per_year_ci_high"])
                 else np.nan,
-                "slope_pvalue": float(lr.pvalue),
+                "slope_pvalue": float(model["pvalue"] if model else lr.pvalue),
                 "r_squared": float(lr.rvalue**2),
                 "adjusted": bool(used_adjustment),
                 "adjusted_for": adjusted_for if used_adjustment else "",
+                "association_model": model["model"] if model else "linear-regression",
+                "association_effect_per_10y": (
+                    model["effect_per_10y"] if model else float(lr.slope * 10.0)
+                ),
+                "association_effect_ci_low": (
+                    model["effect_per_10y_ci_low"]
+                    if model
+                    else float(ci_stats["slope_per_year_ci_low"] * 10.0)
+                ),
+                "association_effect_ci_high": (
+                    model["effect_per_10y_ci_high"]
+                    if model
+                    else float(ci_stats["slope_per_year_ci_high"] * 10.0)
+                ),
+                "association_pvalue": float(model["pvalue"] if model else lr.pvalue),
+                "association_effect_scale": (
+                    model["effect_scale"] if model else "fraction_per_10_years"
+                ),
+                "working_correlation": (model["working_correlation"] if model else np.nan),
+                "sensitivity_selection_rule": (
+                    "earliest_age_then_sample_id" if subject_aware else ""
+                ),
+                "sensitivity_status": sensitivity_status,
+                "sensitivity_reason": sensitivity_reason,
+                "sensitivity_n_subjects": sensitivity_n_subjects,
+                "sensitivity_effect_per_10y": (
+                    sensitivity_model["effect_per_10y"] if sensitivity_model else np.nan
+                ),
+                "sensitivity_effect_ci_low": (
+                    sensitivity_model["effect_per_10y_ci_low"] if sensitivity_model else np.nan
+                ),
+                "sensitivity_effect_ci_high": (
+                    sensitivity_model["effect_per_10y_ci_high"] if sensitivity_model else np.nan
+                ),
+                "sensitivity_pvalue": (
+                    sensitivity_model["pvalue"] if sensitivity_model else np.nan
+                ),
             }
         )
 
@@ -309,6 +533,8 @@ def _compute_trends(
                 "cell_type",
                 "n_donors",
                 "n_donors_detected",
+                "n_subjects",
+                "n_subjects_detected",
                 "mean_fraction",
                 "spearman_rho",
                 "spearman_pvalue",
@@ -326,6 +552,24 @@ def _compute_trends(
                 "r_squared",
                 "adjusted",
                 "adjusted_for",
+                "association_model",
+                "association_effect_per_10y",
+                "association_effect_ci_low",
+                "association_effect_ci_high",
+                "association_pvalue",
+                "association_fdr",
+                "association_effect_scale",
+                "working_correlation",
+                "sensitivity_selection_rule",
+                "sensitivity_status",
+                "sensitivity_reason",
+                "sensitivity_n_subjects",
+                "sensitivity_effect_per_10y",
+                "sensitivity_effect_ci_low",
+                "sensitivity_effect_ci_high",
+                "sensitivity_pvalue",
+                "sensitivity_fdr",
+                "sensitivity_direction_concordant",
                 "direction",
                 "fdr_significant",
             ]
@@ -333,10 +577,15 @@ def _compute_trends(
     out = pd.DataFrame(rows)
     out["spearman_fdr"] = _bh_fdr(out["spearman_pvalue"].to_numpy())
     out["slope_fdr"] = _bh_fdr(out["slope_pvalue"].to_numpy())
+    out["association_fdr"] = _bh_fdr(out["association_pvalue"].to_numpy())
+    out["sensitivity_fdr"] = _bh_fdr(out["sensitivity_pvalue"].to_numpy())
+    out["sensitivity_direction_concordant"] = (
+        np.sign(out["association_effect_per_10y"]) == np.sign(out["sensitivity_effect_per_10y"])
+    ).where(out["sensitivity_effect_per_10y"].notna(), pd.NA)
     out["direction"] = np.where(out["slope_per_year"] > 0, "increase_with_age", "decrease_with_age")
-    out["fdr_significant"] = out["spearman_fdr"] < 0.05
+    out["fdr_significant"] = out["association_fdr"] < 0.05
     return out.sort_values(
-        ["spearman_fdr", "spearman_pvalue", "spearman_rho"], ascending=[True, True, False]
+        ["association_fdr", "association_pvalue", "spearman_rho"], ascending=[True, True, False]
     )
 
 
@@ -504,14 +753,27 @@ def _plot_top_trends(
             line_color = PALETTE["secondary"] if lr.slope >= 0 else PALETTE["danger"]
             ax.plot(xs, ys, linewidth=2, color=line_color)
         stat = trends.loc[trends["cell_type"] == ct].iloc[0]
-        adjusted_note = ""
+        adjusted_note = "Not covariate-adjusted"
         if bool(stat.get("adjusted", False)):
             adjusted_for = str(stat.get("adjusted_for", "")).strip()
-            adjusted_note = f", adj={adjusted_for}" if adjusted_for else ", adj"
-        ax.set_title(
-            f"{ct}\nrho={stat['spearman_rho']:.2f}, FDR={stat['spearman_fdr']:.2e}, "
-            f"n={int(stat['n_donors'])}, detected={int(stat['n_donors_detected'])}"
-            f"{adjusted_note}"
+            adjusted_note = f"Adjusted: {adjusted_for}" if adjusted_for else "Covariate-adjusted"
+        ax.set_title(ct)
+        y_min, y_max = ax.get_ylim()
+        ax.set_ylim(y_min, y_max + 0.2 * (y_max - y_min))
+        ax.text(
+            0.02,
+            0.98,
+            f"Spearman $\\rho$ = {stat['spearman_rho']:.2f} | "
+            f"FDR = {stat['association_fdr']:.2e}\n"
+            f"{int(stat['n_donors'])} samples | "
+            f"{int(stat.get('n_subjects', stat['n_donors']))} subjects\n"
+            f"{adjusted_note}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8.5,
+            linespacing=1.2,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.88, "pad": 2},
         )
         ax.set_xlabel("Age")
         ax.set_ylabel("Donor-level fraction (%)")
@@ -617,31 +879,49 @@ def main() -> None:
         obs,
         min_cells_per_donor=min_cells_per_donor,
         covariate_cols=covariate_cols,
+        require_subject_id=bool(ccfg.get("subject_col")),
     )
+    denominator_only_labels = set(cols.get("denominator_only_labels", []))
+    donor_fraction["denominator_contract"] = str(cols.get("composition_denominator", ""))
+    donor_fraction["denominator_only"] = donor_fraction["cell_type"].isin(denominator_only_labels)
+    inferential_fraction = donor_fraction.loc[~donor_fraction["denominator_only"]].copy()
+    if inferential_fraction.empty:
+        raise RuntimeError("Composition denominator contains no primary analysis populations.")
     trends = _compute_trends(
-        donor_fraction,
+        inferential_fraction,
         min_donors_per_celltype=min_donors_per_celltype,
         covariate_cols=covariate_cols,
         adjust_covariates=adjust_covariates,
         bootstrap_iterations=bootstrap_iterations,
         bootstrap_ci=bootstrap_ci,
         seed=seed,
+        subject_aware=bool(ccfg.get("subject_col")),
     )
     print(
         "[composition_age] "
         f"computed {len(trends):,} cell-type trend tests from "
-        f"{donor_fraction['donor_id'].nunique():,} replicates",
+        f"{donor_fraction['donor_id'].nunique():,} sample units and "
+        f"{donor_fraction['subject_id'].nunique():,} subjects",
         flush=True,
     )
 
-    grouping_col = str(ccfg.get("donor_col", "donor_id"))
-    donor_fraction_out = donor_fraction.rename(columns={"donor_id": grouping_col})
-    trends["grouping_id_column"] = grouping_col
+    sample_unit_col = str(ccfg.get("sample_unit_col", ccfg.get("donor_col", "donor_id")))
+    subject_col = str(ccfg.get("subject_col", sample_unit_col))
+    if sample_unit_col == subject_col:
+        donor_fraction_out = donor_fraction.drop(columns=["subject_id"]).rename(
+            columns={"donor_id": sample_unit_col}
+        )
+    else:
+        donor_fraction_out = donor_fraction.rename(
+            columns={"donor_id": sample_unit_col, "subject_id": subject_col}
+        )
+    trends["sample_unit_id_column"] = sample_unit_col
+    trends["subject_id_column"] = subject_col
     donor_fraction_out.to_csv(args.table_donor_fractions, index=False)
     trends.to_csv(args.table_trends, index=False)
 
     _plot_fraction_by_age_bin(
-        donor_fraction,
+        inferential_fraction,
         path=Path(args.fig_fractions),
         age_bins=age_bins,
         top_n_celltypes=top_n_celltypes,
@@ -652,7 +932,7 @@ def main() -> None:
         dpi=dpi,
     )
     _plot_top_trends(
-        donor_fraction,
+        inferential_fraction,
         trends,
         path=Path(args.fig_trends),
         top_n_trends=top_n_trends,
