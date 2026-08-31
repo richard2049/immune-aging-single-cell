@@ -1,117 +1,66 @@
 # Analysis Decisions
 
-This document summarizes the main analysis choices that determine the
-scientific scope of the public workflow. It records approved methods and
-interpretation boundaries without replacing the linked design and validation
-evidence.
+This summary records the current scientific scope and should be read together
+with the [verification contract](verification_contract.md).
 
-## Biological replicate definition
+## Study And Units
 
-The source `donor_id` values were reused across pools and therefore could not
-serve as independent donor-level units. The corrected workflow uses `Tube_id`
-as `biological_replicate_id`. This definition produced 317 biological
-replicates across 1,000,000 cells with no detected metadata conflicts, and it
-is used for donor-level summaries and cross-validation grouping. The historical
-annotated AnnData checkpoint is no longer accepted for downstream regeneration
-because it predates the current executable provenance contract. Its replacement
-must preserve the accepted replicate definition and pass checkpoint
-qualification before use.
+The analysed cohort is the Terekhova et al. Blood Age Atlas (`syn49637038`),
+not GEO accession `GSE164378`. Source `Donor_id` identifies the subject,
+`Tube_id` identifies a longitudinal sample unit, and `File_name` identifies a
+technical library. Cells and repeated sample units from one subject are not
+independent people.
 
-Evidence: [corrected-results review](corrected_results_review.md) and
-[scientific verification contract](verification_contract.md).
+Historical analyses promoted `Tube_id` to an independent biological replicate.
+Those numerical results and presentation decisions are superseded and remain
+non-promotable until the current workflow is regenerated and reviewed.
 
-## Donor-aware pseudobulk inference
+## Composition And Signatures
 
-Raw counts are aggregated by biological replicate and cell type. The primary
-edgeR quasi-likelihood model tests continuous age per decade while adjusting
-for sex and batch. A simpler age-only model is allowed only when the adjusted
-design is not estimable and must be reported explicitly. Profiles require at
-least 50 cells, 12 biological replicates, 12 years of age coverage, and five
-residual degrees of freedom. TMM normalization and design-aware gene filtering
-are applied before inference.
+Composition and signature scores are aggregated by sample unit and cell type
+while retaining the subject identifier. Primary associations use
+subject-clustered GEE and require support in distinct subjects. Composition
+restores structural zero counts before calculating fractions.
 
-Multiple testing is reported both within cell type and globally across
-gene-cell-type tests. Twelve predefined populations form the primary scope;
-NK cells remain exploratory because of annotation granularity. In the accepted
-full run, 949,518 eligible cells yielded 2,944 profiles, 317 replicates, 36,601
-genes, and 107,948 tests. All 13 fitted adjusted designs were full rank and no
-fallback model was used.
+Each table also records a deterministic one-sample-per-subject sensitivity,
+selecting earliest observed age and then lexical sample ID. This sensitivity
+does not replace the repeated-measures model, and agreement is not automatic
+biological validation.
 
-Evidence: [analysis design](pseudobulk_de_design.md), [workflow details](pseudobulk_de.md),
-and [one-million-cell run acceptance](validation/pseudobulk_de_1m_run_acceptance.md).
+## Age Prediction
 
-## Corrected-result promotion
+Outer and inner cross-validation folds are grouped by `subject_id`; all visits
+and cell-type rows from one person remain in one fold. Training weights balance
+subjects, and bootstrap intervals resample subjects. The scVI representation is
+still learned from the full cohort, so performance is internal and transductive,
+not fully inductive or externally validated.
 
-Automated evidence screening prioritizes results for review but does not
-decide which findings are suitable for presentation. Human review of 109
-evidence rows assigned the 13 priority associations to six retained, six
-exploratory, and one excluded disposition. Three figures were approved for
-public presentation; the signature heatmap was not selected. Signature-score
-associations remain exploratory and are not direct measurements of pathway
-activity.
+## Pseudobulk
 
-Evidence: [corrected-results review](corrected_results_review.md),
-[result dispositions](reviews/corrected_results_dispositions.yml), and the
-[public-promotion record](reviews/corrected_public_promotion_record.md).
+Raw counts are summed by `sample_unit_id x cell_type` with exact count
+conservation. The primary model uses `voomWithDreamWeights`/`dream` with fixed
+effects for sex, batch, and age per decade plus `(1 | subject_id)`. A
+non-identifiable fixed design, insufficient age support, insufficient residual
+degrees of freedom, or absence of repeated subjects stops that cell-type model.
 
-## Predictive and reproducibility scope
+The pre-specified sensitivity selects one sample per subject and fits the same
+fixed effects without a random intercept. Primary and sensitivity outputs are
+separate and require technical validation before gene-level review.
 
-Metadata joins and replicate definitions are validated explicitly, configured
-covariates and model dependencies fail with actionable errors, and stochastic
-steps receive configured seeds. External annotation resources are recorded
-with version and checksum information where applicable. The age-prediction
-analysis uses replicate-grouped nested cross-validation, but its scVI
-representation was learned from the full cohort. It is therefore an internal,
-transductive evaluation rather than an end-to-end assessment in unseen donors,
-and it has no established clinical validity.
+## Checkpoints And Promotion
 
-Evidence: [scientific verification contract](verification_contract.md) and
-[corrected-results review](corrected_results_review.md).
+New checkpoints and outputs use `blood_age_atlas` namespaces. Historical
+`results/gse164378*` directories are immutable provenance. The longitudinal
+workflow no longer invokes historical comparison, disposition, or public-asset
+generators.
 
-## Executable checkpoint and association safeguards
+Technical acceptance does not authorize a biological claim. Cell-population,
+gene, pathway, predictive, causal, or clinical interpretation requires a later
+D-stage human review.
 
-Maintained study profiles fail when required analytical inputs, configured
-covariates, dependencies, estimability, or provenance are unavailable. Demo
-profiles may opt into placeholder outputs explicitly; real-data profiles may
-not. Composition analyses use the complete eligible
-biological-replicate-by-cell-type grid, treating an unobserved population as a
-zero count while reporting positive-count support separately.
+## Interpretation Boundary
 
-The corrected workflow requires a passing checkpoint audit before composition,
-signature, prediction, sensitivity, or pseudobulk aggregation can run. The
-audit records resolved configuration and input fingerprints, metadata
-completeness, stage-wise retention, annotation-confidence summaries, required
-representations, and model-stage provenance. These checks establish technical
-compatibility, not biological validity.
-
-The historical one-million-cell checkpoint currently fails only the required
-scVI, clustering, and CellTypist provenance checks. Numerical results and
-public figures derived from that checkpoint remain withdrawn pending a staged
-rebuild, validation, and renewed human review.
-
-Evidence: [scientific verification contract](verification_contract.md).
-
-## Robustness before gene-level interpretation
-
-Predefined pseudobulk sensitivity analyses raise the minimum cell count to 100,
-omit sex, omit batch, and leave one batch out when the design remains
-estimable. These analyses diagnose dependence on modeling choices and do not
-replace the primary model. The candidate universe is defined by global FDR
-below 0.05; candidates are preserved without an additional discovery filter,
-and no automated label declares a result biologically validated.
-
-The completed audit fitted 212 models, recorded three non-estimable designs and
-no execution failures, and reduced 7,970 statistical candidates to a bounded
-249-row review queue. All 13 diagnostic plot sets were visually reviewed.
-Gene- and pathway-level interpretation remains pending and requires separate
-human scientific review.
-
-Evidence: [robustness audit](pseudobulk_robustness_audit.md) and
-[diagnostic plot review](reviews/pseudobulk_diagnostic_plot_review.yml).
-
-## Interpretation boundary
-
-The study is cross-sectional. Associations with chronological age do not
-estimate within-person change and do not establish causal effects, biological
-age, diagnostic performance, or clinical utility. Technical validation makes
-the outputs reviewable; it does not by itself authorize biological claims.
+The primary estimand is a population-level association with chronological age
+while accounting for repeated observations. It is not a within-person ageing
+effect. The data and models do not establish causality, biological age,
+diagnostic performance, or clinical utility.

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .annotation_mapping import attach_analysis_cell_types
 from .biological_replicates import attach_biological_replicates
 from .plot_style import (
     PALETTE,
@@ -278,6 +279,7 @@ def _write_empty_outputs(
             "nested_cv_enabled",
             "inner_cv_folds",
             "selection_method",
+            "bootstrap_unit",
             "is_best_ridge",
             "is_best",
         ]
@@ -296,44 +298,89 @@ def _prepare_aggregated_table(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, l
     adata = ad.read_h5ad(inp_h5ad, backed="r")
     try:
         attach_biological_replicates(adata, cfg)
+        attach_analysis_cell_types(adata, cfg)
         obs_cols = list(adata.obs.columns)
 
         age_col = pcfg.get("age_col")
-        donor_col = pcfg.get("donor_col")
+        configured_sample_unit_col = pcfg.get("sample_unit_col")
+        configured_group_col = pcfg.get("group_col")
+        sample_unit_col = configured_sample_unit_col or pcfg.get("donor_col")
+        group_col = configured_group_col or sample_unit_col
         celltype_col = pcfg.get("celltype_col")
 
         if age_col not in obs_cols:
             age_col = _first_existing(obs_cols, ["age"])
-        if donor_col not in obs_cols:
-            donor_col = _first_existing(
+        if configured_sample_unit_col and sample_unit_col not in obs_cols:
+            return (
+                pd.DataFrame(),
+                [],
+                f"Configured sample-unit column is missing: {sample_unit_col}",
+            )
+        if sample_unit_col not in obs_cols:
+            sample_unit_col = _first_existing(
                 obs_cols, ["donor_id", "donor_id_y", "donor_id_x", "donor", "sample_id"]
             )
+        if configured_group_col and group_col not in obs_cols:
+            return (
+                pd.DataFrame(),
+                [],
+                f"Configured prediction-group column is missing: {group_col}",
+            )
+        if group_col not in obs_cols:
+            group_col = sample_unit_col
         if celltype_col not in obs_cols:
             celltype_col = _first_existing(
                 obs_cols, ["cell_type", "majority_voting", "predicted_labels", "leiden"]
             )
 
-        if age_col is None or donor_col is None or celltype_col is None:
+        if age_col is None or sample_unit_col is None or group_col is None or celltype_col is None:
             return pd.DataFrame(), [], "Missing required obs columns for age prediction."
 
         if latent_key not in adata.obsm:
             return pd.DataFrame(), [], f"Missing latent representation in obsm: {latent_key}"
 
-        obs = adata.obs[[age_col, donor_col, celltype_col]].copy()
-        obs.columns = ["age", "donor_id", "cell_type"]
+        obs = pd.DataFrame(
+            {
+                "age": adata.obs[age_col],
+                "sample_unit_id": adata.obs[sample_unit_col],
+                "donor_id": adata.obs[group_col],
+                "cell_type": adata.obs[celltype_col],
+            },
+            index=adata.obs_names,
+        )
         obs["age"] = pd.to_numeric(obs["age"], errors="coerce")
 
-        valid_mask = obs["age"].notna() & obs["donor_id"].notna() & obs["cell_type"].notna()
+        valid_mask = (
+            obs["age"].notna()
+            & obs["sample_unit_id"].notna()
+            & obs["donor_id"].notna()
+            & obs["cell_type"].notna()
+        )
         valid_idx = np.flatnonzero(valid_mask.to_numpy())
         if len(valid_idx) == 0:
             return pd.DataFrame(), [], "No valid cells after age/donor/cell_type filtering."
+
+        valid_obs = obs.iloc[valid_idx]
+        sample_contract = valid_obs.groupby("sample_unit_id", observed=False).agg(
+            n_subjects=("donor_id", "nunique"),
+            n_ages=("age", "nunique"),
+        )
+        invalid_samples = sample_contract[
+            sample_contract["n_subjects"].ne(1) | sample_contract["n_ages"].ne(1)
+        ]
+        if not invalid_samples.empty:
+            return (
+                pd.DataFrame(),
+                [],
+                "Age prediction found sample units with conflicting subject or age assignments.",
+            )
 
         if len(valid_idx) > max_cells:
             if sampling_strategy == "random":
                 rng = np.random.default_rng(seed)
                 valid_idx = np.sort(rng.choice(valid_idx, size=max_cells, replace=False))
             else:
-                donor_values = obs.iloc[valid_idx]["donor_id"].astype(str).to_numpy()
+                donor_values = obs.iloc[valid_idx]["sample_unit_id"].astype(str).to_numpy()
                 celltype_values = obs.iloc[valid_idx]["cell_type"].astype(str).to_numpy()
                 valid_idx = _stratified_sample_indices(
                     valid_idx=valid_idx,
@@ -361,12 +408,14 @@ def _prepare_aggregated_table(inp_h5ad: str, cfg: dict) -> tuple[pd.DataFrame, l
             agg_map[c] = (c, "mean")
 
         agg = (
-            cell_df.groupby(["donor_id", "cell_type"], observed=False).agg(**agg_map).reset_index()
+            cell_df.groupby(["sample_unit_id", "donor_id", "cell_type"], observed=False)
+            .agg(**agg_map)
+            .reset_index()
         )
         agg = agg[agg["n_cells"] >= min_cells_per_group].copy()
 
         if agg.empty:
-            return pd.DataFrame(), [], "No donor-celltype groups pass min_cells_per_group."
+            return pd.DataFrame(), [], "No sample-unit-celltype groups pass min_cells_per_group."
 
         return agg, latent_cols, ""
     finally:
@@ -658,12 +707,19 @@ def _bootstrap_metric_ci(
     n_boot: int,
     ci: float,
     seed: int,
+    groups: np.ndarray | None = None,
 ) -> tuple[float, float]:
     yt = np.asarray(y_true, dtype=float)
     yp = np.asarray(y_pred, dtype=float)
     valid = np.isfinite(yt) & np.isfinite(yp)
     yt = yt[valid]
     yp = yp[valid]
+    group_values = None
+    if groups is not None:
+        group_values = np.asarray(groups, dtype=str)
+        if group_values.shape[0] != valid.shape[0]:
+            raise ValueError("Bootstrap groups must match the prediction rows.")
+        group_values = group_values[valid]
     n = int(yt.shape[0])
     if n == 0:
         return np.nan, np.nan
@@ -680,10 +736,23 @@ def _bootstrap_metric_ci(
         return float(v), float(v)
 
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, n, size=(int(max(n_boot, 1)), n))
-    boot_vals = np.empty(idx.shape[0], dtype=float)
-    for i in range(idx.shape[0]):
-        boot_vals[i] = _eval(yt[idx[i]], yp[idx[i]])
+    n_iterations = int(max(n_boot, 1))
+    boot_vals = np.empty(n_iterations, dtype=float)
+    if group_values is None:
+        indices = rng.integers(0, n, size=(n_iterations, n))
+        for i in range(n_iterations):
+            boot_vals[i] = _eval(yt[indices[i]], yp[indices[i]])
+    else:
+        unique_groups = np.unique(group_values)
+        group_indices = {group: np.flatnonzero(group_values == group) for group in unique_groups}
+        for i in range(n_iterations):
+            sampled_groups = rng.choice(
+                unique_groups,
+                size=unique_groups.size,
+                replace=True,
+            )
+            sampled_indices = np.concatenate([group_indices[group] for group in sampled_groups])
+            boot_vals[i] = _eval(yt[sampled_indices], yp[sampled_indices])
     boot_vals = boot_vals[np.isfinite(boot_vals)]
     if boot_vals.size == 0:
         return np.nan, np.nan
@@ -708,11 +777,24 @@ def _bootstrap_mae_r2_ci_from_pred_frame(
         }
     y_true = pred_df["age_true"].to_numpy(dtype=float)
     y_pred = pred_df["age_pred"].to_numpy(dtype=float)
+    groups = pred_df["donor_id"].astype(str).to_numpy() if "donor_id" in pred_df.columns else None
     mae_low, mae_high = _bootstrap_metric_ci(
-        y_true, y_pred, metric="mae", n_boot=n_boot, ci=ci, seed=seed
+        y_true,
+        y_pred,
+        metric="mae",
+        n_boot=n_boot,
+        ci=ci,
+        seed=seed,
+        groups=groups,
     )
     r2_low, r2_high = _bootstrap_metric_ci(
-        y_true, y_pred, metric="r2", n_boot=n_boot, ci=ci, seed=seed + 17
+        y_true,
+        y_pred,
+        metric="r2",
+        n_boot=n_boot,
+        ci=ci,
+        seed=seed + 17,
+        groups=groups,
     )
     return {
         "mae_ci_low": mae_low,
@@ -728,9 +810,14 @@ def _build_prediction_frames(
     y_base: np.ndarray,
     fold_id: np.ndarray,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    pred_group = agg_subset[["donor_id", "cell_type", "age", "n_cells"]].copy()
+    columns = ["donor_id", "cell_type", "age", "n_cells"]
+    if "sample_unit_id" in agg_subset.columns:
+        columns.insert(1, "sample_unit_id")
+    pred_group = agg_subset[columns].copy()
     pred_group = pred_group.rename(columns={"age": "age_true"})
-    pred_group["evaluation_level"] = "donor_celltype"
+    pred_group["evaluation_level"] = (
+        "sample_unit_celltype" if "sample_unit_id" in pred_group.columns else "donor_celltype"
+    )
     pred_group["age_pred"] = y_pred
     pred_group["age_base"] = y_base
     pred_group["residual"] = pred_group["age_pred"] - pred_group["age_true"]
@@ -811,7 +898,7 @@ def _metrics_row_from_predictions(
         y_pred=pred_donor["age_pred"].to_numpy(dtype=float),
         y_base=pred_donor["age_base"].to_numpy(dtype=float),
     )
-    if primary_level == "donor":
+    if primary_level in {"donor", "sample_unit"}:
         primary_metrics = donor_metrics
         primary_pred = pred_donor
     else:
@@ -826,7 +913,7 @@ def _metrics_row_from_predictions(
     )
     donor_ci = (
         primary_ci
-        if primary_level == "donor"
+        if primary_level in {"donor", "sample_unit"}
         else _bootstrap_mae_r2_ci_from_pred_frame(
             pred_donor,
             n_boot=bootstrap_iterations,
@@ -879,6 +966,7 @@ def _metrics_row_from_predictions(
         "n_groups": int(pred_group.shape[0]),
         "n_donor_samples": int(pred_donor.shape[0]),
         "n_donors": int(n_donors),
+        "n_subjects": int(n_donors),
         "n_celltypes": int(n_celltypes),
         "n_splits": int(n_splits),
         "primary_level": primary_level,
@@ -886,7 +974,43 @@ def _metrics_row_from_predictions(
         "nested_cv_enabled": nested_cv_enabled,
         "inner_cv_folds": int(inner_cv_folds),
         "selection_method": selection_method,
+        "bootstrap_unit": "subject",
     }
+
+
+def _make_group_splits(
+    groups: np.ndarray,
+    *,
+    requested_folds: int,
+    context: str,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    from sklearn.model_selection import GroupKFold
+
+    groups = np.asarray(groups, dtype=str)
+    unique_groups = np.unique(groups)
+    n_splits = min(int(requested_folds), int(unique_groups.size))
+    if n_splits < 2:
+        raise ValueError(f"{context} requires at least two distinct subject groups.")
+
+    splitter = GroupKFold(n_splits=n_splits)
+    splits = list(splitter.split(np.zeros(groups.shape[0]), groups=groups))
+    test_fold = np.full(groups.shape[0], -1, dtype=int)
+    for fold, (train_idx, test_idx) in enumerate(splits):
+        overlap = set(groups[train_idx]).intersection(groups[test_idx])
+        if overlap:
+            raise ValueError(f"{context} fold {fold} leaks {len(overlap)} subject(s).")
+        test_fold[test_idx] = fold
+
+    if bool(np.any(test_fold < 0)):
+        raise RuntimeError(f"{context} did not assign every row to one test fold.")
+    fold_counts = (
+        pd.DataFrame({"subject_id": groups, "fold": test_fold})
+        .groupby("subject_id", observed=False)["fold"]
+        .nunique()
+    )
+    if bool(fold_counts.ne(1).any()):
+        raise RuntimeError(f"{context} assigned a subject to more than one test fold.")
+    return splits
 
 
 def _select_inner_best_candidate(
@@ -898,17 +1022,15 @@ def _select_inner_best_candidate(
     donor_balanced_training: bool,
     primary_level: str,
 ) -> tuple[dict, float]:
-    from sklearn.model_selection import GroupKFold
-
-    y_train = agg_train["age"].to_numpy(dtype=float)
     groups_train = agg_train["donor_id"].astype(str).to_numpy()
     unique_train_groups = np.unique(groups_train)
-    n_inner = min(int(inner_cv_folds), int(unique_train_groups.size))
-    if n_inner < 2:
+    if unique_train_groups.size < 2:
         return candidates[0], np.inf
-
-    splitter = GroupKFold(n_splits=n_inner)
-    inner_splits = list(splitter.split(np.zeros_like(y_train), y_train, groups=groups_train))
+    inner_splits = _make_group_splits(
+        groups_train,
+        requested_folds=inner_cv_folds,
+        context="Inner cross-validation",
+    )
 
     best_cand = candidates[0]
     best_score = np.inf
@@ -930,7 +1052,7 @@ def _select_inner_best_candidate(
                 y_pred=pred_donor["age_pred"].to_numpy(dtype=float),
                 y_base=pred_donor["age_base"].to_numpy(dtype=float),
             )
-            if primary_level == "donor"
+            if primary_level in {"donor", "sample_unit"}
             else _compute_prediction_metrics(
                 y_true=pred_group["age_true"].to_numpy(dtype=float),
                 y_pred=pred_group["age_pred"].to_numpy(dtype=float),
@@ -946,7 +1068,8 @@ def _select_inner_best_candidate(
 
 def _aggregate_group_predictions_to_donor(pred_group: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict] = []
-    for donor_id, sub in pred_group.groupby("donor_id", observed=True):
+    aggregate_col = "sample_unit_id" if "sample_unit_id" in pred_group.columns else "donor_id"
+    for aggregate_id, sub in pred_group.groupby(aggregate_col, observed=True):
         if sub.empty:
             continue
         weights = sub["n_cells"].to_numpy(dtype=float)
@@ -958,8 +1081,15 @@ def _aggregate_group_predictions_to_donor(pred_group: pd.DataFrame) -> pd.DataFr
         age_base = float(np.average(sub["age_base"].to_numpy(dtype=float), weights=weights))
         rows.append(
             {
-                "evaluation_level": "donor",
-                "donor_id": str(donor_id),
+                "evaluation_level": (
+                    "sample_unit" if aggregate_col == "sample_unit_id" else "donor"
+                ),
+                "donor_id": str(sub["donor_id"].iloc[0]),
+                **(
+                    {"sample_unit_id": str(aggregate_id)}
+                    if aggregate_col == "sample_unit_id"
+                    else {}
+                ),
                 "cell_type": "__all__",
                 "age_true": age_true,
                 "age_pred": age_pred,
@@ -982,18 +1112,16 @@ def _aggregate_group_predictions_to_donor(pred_group: pd.DataFrame) -> pd.DataFr
 def _evaluate_candidates(
     agg: pd.DataFrame, latent_cols: list[str], cfg: dict
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    from sklearn.model_selection import GroupKFold
-
     pcfg = cfg.get("age_prediction", {})
     cv_folds = int(pcfg.get("cv_folds", 5))
     nested_cv_enabled = bool(pcfg.get("nested_cv", True))
     inner_cv_folds = int(pcfg.get("nested_inner_cv_folds", 3))
     clip_predictions = bool(pcfg.get("clip_predictions_to_train_age_range", True))
     donor_balanced_training = bool(pcfg.get("donor_balanced_training", True))
-    primary_level_cfg = str(pcfg.get("primary_metric_level", "donor")).strip().lower()
-    primary_level = (
-        "donor" if primary_level_cfg not in {"donor", "donor_celltype"} else primary_level_cfg
-    )
+    default_level = "sample_unit" if "sample_unit_id" in agg.columns else "donor"
+    primary_level_cfg = str(pcfg.get("primary_metric_level", default_level)).strip().lower()
+    allowed_levels = {"donor", "donor_celltype", "sample_unit", "sample_unit_celltype"}
+    primary_level = default_level if primary_level_cfg not in allowed_levels else primary_level_cfg
     bootstrap_iterations = int(pcfg.get("bootstrap_iterations", 2000))
     bootstrap_ci = float(pcfg.get("bootstrap_ci", 0.95))
     seed = int(cfg.get("run", {}).get("seed", 42))
@@ -1005,18 +1133,12 @@ def _evaluate_candidates(
     unique_groups = np.unique(groups)
     if unique_groups.size < 3:
         raise ValueError("Need at least 3 donors for cross-donor CV.")
-    n_splits = min(cv_folds, int(unique_groups.size))
-    if n_splits < 2:
-        raise ValueError("Not enough donor groups for CV.")
-
-    splitter = GroupKFold(n_splits=n_splits)
-    splits = list(splitter.split(x, y, groups=groups))
-    for fold, (train_idx, test_idx) in enumerate(splits):
-        overlap = set(groups[train_idx]).intersection(groups[test_idx])
-        if overlap:
-            raise ValueError(
-                f"Cross-validation fold {fold} leaks {len(overlap)} biological replicate(s)."
-            )
+    splits = _make_group_splits(
+        groups,
+        requested_folds=cv_folds,
+        context="Outer cross-validation",
+    )
+    n_splits = len(splits)
 
     candidates = _load_model_builders(cfg, latent_cols=latent_cols, seed=seed)
     if not candidates:
@@ -1495,8 +1617,8 @@ def main() -> None:
         return
     print(
         "[age_prediction] "
-        f"prepared {len(agg):,} replicate-cell-type groups from "
-        f"{agg['donor_id'].nunique():,} replicates",
+        f"prepared {len(agg):,} sample-unit-cell-type groups from "
+        f"{agg['donor_id'].nunique():,} subject groups",
         flush=True,
     )
 
@@ -1523,28 +1645,42 @@ def main() -> None:
         return
 
     summary = _build_model_comparison_summary(pred_all=pred_all, metrics=metrics, cfg=cfg)
-    grouping_col = str(pcfg.get("donor_col", "donor_id"))
-    pred_out = pred_all.rename(columns={"donor_id": grouping_col})
+    grouping_col = str(pcfg.get("group_col", pcfg.get("donor_col", "donor_id")))
+    sample_unit_col = str(pcfg.get("sample_unit_col", pcfg.get("donor_col", "donor_id")))
+    if grouping_col == sample_unit_col:
+        pred_out = pred_all.drop(columns=["sample_unit_id"], errors="ignore").rename(
+            columns={"donor_id": grouping_col}
+        )
+    else:
+        pred_out = pred_all.rename(
+            columns={"donor_id": grouping_col, "sample_unit_id": sample_unit_col}
+        )
     metrics["grouping_id_column"] = grouping_col
+    metrics["sample_unit_id_column"] = sample_unit_col
     summary["grouping_id_column"] = grouping_col
+    summary["sample_unit_id_column"] = sample_unit_col
     pred_out.to_csv(table_pred, index=False)
     metrics.to_csv(table_metrics, index=False)
     summary.to_csv(table_summary, index=False)
     best_row = metrics.loc[metrics["is_best"]].iloc[0]
     pred_best = pred_all[pred_all["is_best_model"]].copy()
     if "evaluation_level" in pred_best.columns:
-        pred_best_donor = pred_best[pred_best["evaluation_level"].astype(str) == "donor"].copy()
+        pred_best_donor = pred_best[
+            pred_best["evaluation_level"].astype(str).isin(["sample_unit", "donor"])
+        ].copy()
         pred_best_group = pred_best[
-            pred_best["evaluation_level"].astype(str) == "donor_celltype"
+            pred_best["evaluation_level"]
+            .astype(str)
+            .isin(["sample_unit_celltype", "donor_celltype"])
         ].copy()
     else:
         pred_best_donor = pd.DataFrame()
         pred_best_group = pd.DataFrame()
     if pred_best_donor.empty:
         pred_best_donor = pred_best
-        density_label = "Donor-celltype groups"
+        density_label = "Sample-unit-cell-type groups"
     else:
-        density_label = "Donors"
+        density_label = "Sample units"
     if pred_best_group.empty:
         pred_best_group = pred_best
     _plot_observed_vs_pred(pred_best_donor, metrics, fig_pred, dpi, density_label=density_label)

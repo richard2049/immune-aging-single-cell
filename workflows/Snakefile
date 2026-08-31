@@ -84,13 +84,30 @@ rule cluster:
     shell:
         "python -m src.cluster --config {CFG} --inp {input} --out {output}"
 
+rule validate_cluster_checkpoint:
+    input:
+        source=f"{OUT}/04_scvi.h5ad",
+        checkpoint=f"{OUT}/05_clustered.h5ad"
+    output:
+        f"{OUT}/validation/05_cluster_checkpoint.json"
+    shell:
+        (
+            "python -m src.validate_cluster_checkpoint --config {CFG} "
+            "--inp {input.source} --checkpoint {input.checkpoint} "
+            "--report {output}"
+        )
+
 rule annotate:
     input:
-        f"{OUT}/05_clustered.h5ad"
+        checkpoint=f"{OUT}/05_clustered.h5ad",
+        validation=f"{OUT}/validation/05_cluster_checkpoint.json"
     output:
         f"{OUT}/06_annotated.h5ad"
     shell:
-        "python -m src.annotate_celltypist --config {CFG} --inp {input} --out {output}"
+        (
+            "python -m src.annotate_celltypist --config {CFG} "
+            "--inp {input.checkpoint} --out {output}"
+        )
 
 rule report:
     input:

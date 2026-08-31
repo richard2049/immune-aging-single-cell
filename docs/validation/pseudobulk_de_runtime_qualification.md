@@ -1,5 +1,10 @@
 # Pseudobulk DE Runtime Qualification
 
+> [!IMPORTANT]
+> This record qualifies the superseded fixed-effect edgeR runtime only. The
+> maintained longitudinal workflow uses the separately pinned `dream` image,
+> which still requires bounded qualification.
+
 ## Status
 
 Passed on 2026-07-30 for bounded technical validation. The full GSE164378

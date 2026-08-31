@@ -20,6 +20,7 @@ dependencies:
   - pandas=2.3.*
   - scipy=1.15.*
   - scikit-learn=1.7.*
+  - statsmodels=0.14.*
   # The maintained workflow uses the CPU XGBoost backend. Pin the build so
   # CUDA virtual-package detection cannot introduce a second CUDA runtime.
   - xgboost=2.1.*=cpu_*

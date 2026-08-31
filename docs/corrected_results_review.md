@@ -1,14 +1,13 @@
 # Corrected Results Review
 
 > [!IMPORTANT]
-> This record describes a historical review. Its public authorization is
-> suspended while the annotated checkpoint and structural-zero composition
-> analysis are rebuilt under the current verification contract. Results require
-> renewed validation and human review before promotion.
+> This record is superseded by decision 011. It treated `Tube_id` sample units
+> as independent people and used the wrong study identity. Its numerical
+> dispositions, wording, figures, and public authorization are withdrawn.
 
 ## Review Status
 
-**Corrected public wording and assets approved.**
+**Historical review only; no current wording, result, or asset is approved.**
 
 This document records the pre-specified evidence screen, human dispositions, and final approval. Public interpretation is limited to the exact retained signals, wording, and assets listed in the promotion record.
 

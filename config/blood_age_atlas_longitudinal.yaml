@@ -1,0 +1,153 @@
+extends: blood_age_atlas_1m.yaml
+cfg_path: config/blood_age_atlas_longitudinal.yaml
+
+project:
+  out_dir: results/blood_age_atlas_longitudinal
+
+analysis_checkpoint:
+  annotated_h5ad: results/blood_age_atlas_1m/06_annotated.h5ad
+  provisional_out_dir: results/blood_age_atlas_1m
+
+scientific_audit:
+  annotation_confidence_col: cell_type_confidence
+  stage_h5ads:
+    source_input: data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad
+    selected_cells: results/blood_age_atlas_1m/01_raw.h5ad
+    metadata_integrated: results/blood_age_atlas_1m/01_meta.h5ad
+    qc_checkpoint: results/blood_age_atlas_1m/02_qc.h5ad
+    doublet_checkpoint: results/blood_age_atlas_1m/03_nodoublets.h5ad
+    scvi_checkpoint: results/blood_age_atlas_1m/04_scvi.h5ad
+    clustered_checkpoint: results/blood_age_atlas_1m/05_clustered.h5ad
+    annotated_checkpoint: results/blood_age_atlas_1m/06_annotated.h5ad
+
+annotation_qualification:
+  enabled: true
+  mapping_path: config/annotation_mappings/blood_age_atlas_celltypist_v1.csv
+  raw_label_col: cell_type
+  confidence_col: cell_type_confidence
+  cluster_col: leiden
+  analysis_label_col: cell_type_analysis
+  disposition_col: cell_type_analysis_disposition
+  require_approved_mapping: true
+  low_confidence_reference: 0.5
+  marker_chunk_size: 10000
+  marker_panels:
+    B cells: [MS4A1, CD79A, CD74, CD37]
+    CD4 T cells: [CD3D, CD3E, TRAC, IL7R, LTB]
+    CD8 T cells: [CD3D, CD3E, TRAC, CD8A, CD8B]
+    Classical monocytes: [LST1, S100A8, S100A9, CTSD, LILRB1]
+    Dendritic cells: [FCER1A, CD1C, CST3, HLA-DRA]
+    MAIT cells: [CD3D, TRAC, KLRB1, SLC4A10]
+    NK cells: [NKG7, GNLY, KLRD1, FCGR3A]
+    Non-classical monocytes: [LST1, FCGR3A, MS4A7, LILRB1]
+    Regulatory T cells: [CD3D, CD3E, IL7R, CTLA4, IL32]
+    pDC: [GZMB, JCHAIN, TCF4, IL3RA]
+
+biological_units:
+  subject_col: subject_id
+  subject_source_col: donor_id
+  sample_unit_col: sample_unit_id
+  sample_unit_source_col: tube_id
+  technical_library_col: technical_library_id
+  technical_library_source_col: file_name
+  source_table_path: data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv
+  source_table_sep: ","
+  source_table_join_key: cell_id
+  age_col: age
+  sex_col: sex
+  batch_col: batch
+  mapping_path: results/blood_age_atlas_longitudinal/tables/cell_to_longitudinal_units.csv
+  mapping_join_key: cell_id
+  expected_subjects: 166
+  expected_sample_units: 317
+  strict: true
+
+metadata:
+  table_columns:
+    - donor_id
+    - age
+    - sex
+    - age_group
+    - batch
+    - tube_id
+    - file_name
+
+composition_age:
+  sample_unit_col: sample_unit_id
+  subject_col: subject_id
+  celltype_col: cell_type_analysis
+  denominator: all_qc_passed_cells_with_other_unresolved
+  other_unresolved_label: Other/unresolved
+
+signature_age:
+  sample_unit_col: sample_unit_id
+  subject_col: subject_id
+  celltype_col: cell_type_analysis
+  materialize_chunk_size: 5000
+  # Preserve the population-average estimand. Retry only numerical
+  # nonconvergence with robust subject-clustered independence GEE.
+  gee_working_correlation: exchangeable
+  gee_nonconvergence_fallback: independence
+
+age_prediction:
+  sample_unit_col: sample_unit_id
+  group_col: subject_id
+  celltype_col: cell_type_analysis
+  primary_metric_level: sample_unit
+  n_jobs: 1
+
+sensitivity_age:
+  # Main analyses retain 5,000 iterations; scenario stability uses 500.
+  bootstrap_iterations: 500
+
+pseudobulk_de:
+  # The accepted design is documented in docs/pseudobulk_de_design.md.
+  count_layer: null
+  replicate_col: sample_unit_id
+  subject_col: subject_id
+  celltype_col: cell_type_analysis
+  age_col: age
+  sex_col: sex
+  batch_col: batch
+  sample_col: technical_library_id
+  min_cells_per_pseudobulk: 50
+  min_replicates_per_celltype: 12
+  # Reuses the approved minimum-replicate threshold at the independent-subject level.
+  min_subjects_per_celltype: 12
+  min_age_span_years: 12
+  min_residual_df: 5
+  aggregation_chunk_size: 5000
+  primary_formula: "~ sex + batch + age_decade + (1 | subject_id)"
+  sensitivity_sample_rule: earliest_age_then_sample_id
+  age_effect_scale: log2_fold_change_per_10_years
+  primary_cell_types:
+    - B cells
+    - CD4 T cells
+    - CD8 T cells
+    - Classical monocytes
+    - Dendritic cells
+    - MAIT cells
+    - NK cells
+    - Non-classical monocytes
+    - Regulatory T cells
+    - pDC
+  exploratory_cell_types: []
+  runtime:
+    mode: docker
+    docker_context: desktop-linux
+    docker_image: immune-aging-dream:bioc-3.23-dream-1.42.0
+    expected_r_version: "4.6"
+    expected_bioconductor_version: "3.23"
+    expected_edger_version: "4.10.1"
+    expected_variance_partition_version: "1.42.0"
+    timeout_seconds: 14400
+
+pseudobulk_robustness:
+  # These scenarios diagnose robustness; they do not replace the primary
+  # adjusted model or approve biological claims. See
+  # docs/pseudobulk_robustness_audit.md.
+  candidate_global_fdr_threshold: 0.05
+  high_cell_min_cells: 100
+  review_candidates_per_direction_per_celltype: 10
+  run_leave_one_batch_out: true
+  timeout_seconds: 86400

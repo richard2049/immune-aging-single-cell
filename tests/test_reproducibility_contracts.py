@@ -14,11 +14,16 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.age_prediction import _load_model_builders
+from src.age_prediction import (
+    _bootstrap_metric_ci,
+    _load_model_builders,
+    _make_group_splits,
+    _prepare_aggregated_table,
+)
 from src.annotate_celltypist import _load_model_with_provenance
 from src.build_donor_metadata import _aggregate_replicates, _is_raw_output
 from src.metadata_integrate import _merge_external_metadata
-from src.scvi_train import _resolve_covariates
+from src.scvi_train import _required_arguments, _resolve_covariates, _software_versions
 
 
 class ReproducibilityContractTests(unittest.TestCase):
@@ -27,6 +32,17 @@ class ReproducibilityContractTests(unittest.TestCase):
         root = Path(".tmp") / "tests"
         root.mkdir(parents=True, exist_ok=True)
         return tempfile.TemporaryDirectory(dir=root)
+
+    def test_scvi_software_versions_are_plain_serializable_strings(self) -> None:
+        class VersionLike:
+            def __str__(self) -> str:
+                return "2.5.1+cu121"
+
+        with patch("src.scvi_train.version", side_effect=lambda name: f"{name}-fixture"):
+            recorded = _software_versions(VersionLike())
+
+        self.assertEqual(recorded["torch_version"], "2.5.1+cu121")
+        self.assertTrue(all(isinstance(value, str) and value for value in recorded.values()))
 
     def test_metadata_join_preserves_order_and_accepts_exact_duplicates(self) -> None:
         with self._temporary_directory() as tmp:
@@ -131,8 +147,8 @@ class ReproducibilityContractTests(unittest.TestCase):
     def test_configured_prediction_dependencies_are_declared(self) -> None:
         environment = Path("environment.yml").read_text(encoding="utf-8").lower()
         for path in (
-            Path("config/gse164378_pilot.yaml"),
-            Path("config/gse164378_1m.yaml"),
+            Path("config/blood_age_atlas_pilot.yaml"),
+            Path("config/blood_age_atlas_1m.yaml"),
         ):
             config = yaml.safe_load(path.read_text(encoding="utf-8"))
             requested = config["age_prediction"]["model_order"]
@@ -151,6 +167,83 @@ class ReproducibilityContractTests(unittest.TestCase):
         with patch("builtins.__import__", side_effect=block_xgboost):
             with self.assertRaisesRegex(ImportError, "requests 'xgboost'"):
                 _load_model_builders(config, latent_cols=["z0"], seed=42)
+
+    def test_prediction_folds_keep_all_samples_from_each_subject_together(self) -> None:
+        groups = np.array(
+            ["subject_1", "subject_1", "subject_2", "subject_3", "subject_3", "subject_4"]
+        )
+
+        splits = _make_group_splits(
+            groups,
+            requested_folds=3,
+            context="bounded subject-group fixture",
+        )
+
+        test_fold = np.full(groups.shape[0], -1, dtype=int)
+        for fold, (train_idx, test_idx) in enumerate(splits):
+            self.assertFalse(set(groups[train_idx]).intersection(groups[test_idx]))
+            test_fold[test_idx] = fold
+        for subject in np.unique(groups):
+            self.assertEqual(np.unique(test_fold[groups == subject]).size, 1)
+
+    def test_prediction_rejects_missing_configured_subject_group(self) -> None:
+        with self._temporary_directory() as tmp:
+            checkpoint = Path(tmp) / "checkpoint.h5ad"
+            adata = ad.AnnData(
+                X=np.ones((2, 1)),
+                obs=pd.DataFrame(
+                    {
+                        "age": [30, 50],
+                        "sample_unit_id": ["sample_1", "sample_2"],
+                        "cell_type": ["T", "T"],
+                    },
+                    index=["cell_1", "cell_2"],
+                ),
+                obsm={"X_scVI": np.ones((2, 2))},
+            )
+            adata.write_h5ad(checkpoint)
+            config = {
+                "run": {"seed": 42},
+                "age_prediction": {
+                    "age_col": "age",
+                    "sample_unit_col": "sample_unit_id",
+                    "group_col": "subject_id",
+                    "celltype_col": "cell_type",
+                    "latent_key": "X_scVI",
+                },
+            }
+
+            aggregated, _, error = _prepare_aggregated_table(str(checkpoint), config)
+
+        self.assertTrue(aggregated.empty)
+        self.assertIn("Configured prediction-group column is missing", error)
+
+    def test_prediction_bootstrap_accepts_subject_clusters(self) -> None:
+        y_true = np.array([30, 31, 50, 70, 71], dtype=float)
+        y_pred = np.array([32, 32, 48, 68, 69], dtype=float)
+        groups = np.array(["S1", "S1", "S2", "S3", "S3"])
+
+        first = _bootstrap_metric_ci(
+            y_true,
+            y_pred,
+            metric="mae",
+            n_boot=100,
+            ci=0.95,
+            seed=42,
+            groups=groups,
+        )
+        second = _bootstrap_metric_ci(
+            y_true,
+            y_pred,
+            metric="mae",
+            n_boot=100,
+            ci=0.95,
+            seed=42,
+            groups=groups,
+        )
+
+        self.assertEqual(first, second)
+        self.assertTrue(np.isfinite(first).all())
 
     def test_celltypist_provenance_records_and_checks_model_hash(self) -> None:
         with self._temporary_directory() as tmp:
@@ -209,6 +302,10 @@ class ReproducibilityContractTests(unittest.TestCase):
         )
         self.assertEqual(categorical, ["batch"])
         self.assertEqual(continuous, [])
+
+    def test_scvi_parameters_must_be_explicit_before_training(self) -> None:
+        with self.assertRaisesRegex(KeyError, "must explicitly define"):
+            _required_arguments({"model_args": {}, "training_args": {}})
 
 
 if __name__ == "__main__":

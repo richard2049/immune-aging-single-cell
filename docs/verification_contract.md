@@ -2,19 +2,22 @@
 
 ## Biological Units
 
-- Biological replicates are the independent units for replicate-level age
-  associations and age prediction.
-- Cells from one biological replicate are not independent replicates.
-- `biological_replicate_id` must come from an authoritative metadata field.
-  For GSE164378, source `Tube_id` is canonical; reused `donor_id` labels are
-  retained only as source metadata.
+- `subject_id` is the dependency and cross-validation group. For the Blood Age
+  Atlas it is derived from source `Donor_id`.
+- `sample_unit_id` is the longitudinal observation and aggregation unit. For
+  this study it is derived from source `Tube_id`.
+- `technical_library_id` records the technical input and is derived from source
+  `File_name`; it is not an independent biological replicate.
+- Cells and repeated sample units from one subject are not independent subjects.
+- Every sample unit must map to exactly one subject, age, sex, and configured
+  batch. A subject may map to several sample units and ages.
 - Cell-level operations may be used for representation learning, QC,
   clustering, or annotation, but inferential claims must respect replicate
   structure.
 
 ## Metadata
 
-- Donor, biological replicate, age, sex, batch, cohort, sample, tissue, and
+- Subject, sample unit, technical library, age, sex, batch, cohort, tissue, and
   cell-type fields must have documented provenance.
 - Joins must validate cardinality, preserve cell count and order, and report
   unmatched identifiers.
@@ -30,28 +33,72 @@
 
 ## Composition
 
-- Eligible biological replicates must be crossed with the observed cell-type
+- The primary Blood Age Atlas composition denominator retains every QC-passed
+  cell. Cells without an approved primary analysis label contribute only to the
+  derived `Other/unresolved` denominator category; raw and exploratory labels
+  remain preserved and `Other/unresolved` is not tested as a biological
+  population.
+- Eligible sample units must be crossed with the observed cell-type
   universe before fractions are calculated. Absence of a population is a zero
-  count, not a missing replicate.
-- Report total independent replicates separately from replicates with a
+  count, not a missing sample.
+- Report sample units and subjects separately, including the number with a
   positive count for the population.
 - Fractions over the complete cell-type grid must sum to one within each
-  eligible biological replicate, subject only to numerical tolerance.
+  eligible sample unit, subject only to numerical tolerance.
+- Primary uncertainty must account for repeated samples within subjects.
+- The deterministic one-sample-per-subject sensitivity uses earliest age and
+  then lexical sample ID; it does not replace the primary repeated-measures model.
+- Signature associations attempt exchangeable Gaussian GEE first. Only the
+  specific GEE nonconvergence condition may trigger the configured independence
+  working-correlation fallback; data, covariates, subject groups, family, and
+  population-average estimand remain unchanged.
+- The signature fallback retains robust subject-clustered covariance and must
+  record its model, covariance, trigger, standard error, and manual-review
+  status. Missing data, rank deficiency, non-finite inference, invalid
+  configuration, or a second nonconvergence must stop rather than trigger an
+  additional substitute model.
+- Fallback estimates remain subject to the prespecified one-sample-per-subject
+  comparison and cannot independently authorize a biological claim.
 
 ## Cross-Validation And Prediction
 
-- No biological replicate may occur in more than one fold.
+- No subject may occur in more than one fold. All sample units and cell-type
+  rows from a subject must receive the same outer-fold assignment.
 - Model candidates must use identical grouped folds for comparison.
 - Feature selection, scaling, imputation, prediction-specific dimensionality
   reduction, and hyperparameter selection must use training data only.
 - Requested model dependencies are part of the configuration contract; a
   missing library must fail explicitly rather than alter the candidate set.
-- Report replicate-level predictions, fold variability, uncertainty, and a
+- Report sample-unit predictions, fold variability, subject-clustered
+  uncertainty, and a
   simple baseline.
 - The current regressor uses grouped cross-validation on `X_scVI`, but
   `X_scVI` was learned once from the full cohort. Its metrics are internal,
   transductive estimates, not fully end-to-end inductive performance for unseen
-  donors.
+  subjects.
+
+## Pseudobulk
+
+- Raw counts are summed within `sample_unit_id x cell_type`; technical-library
+  contributions are retained in metadata and count conservation is exact.
+- The primary model uses a subject random intercept and must pass fixed-effect
+  rank, age support, residual-degree-of-freedom, and repeated-subject checks.
+- The one-sample-per-subject sensitivity uses the pre-specified deterministic
+  rule and a fixed-effect model without a subject random intercept.
+- Primary and sensitivity results remain separate. Concordance is a robustness
+  diagnostic, not automatic biological validation.
+
+## scVI Checkpoint Reconstruction
+
+- Architecture and training arguments must be explicit in the resolved profile;
+  package defaults are not an acceptable durable execution contract.
+- The reconstructed checkpoint must preserve the exact input cell and gene
+  identifiers, order, and shape.
+- `X_scVI` must have the configured latent dimension and only finite values.
+- Stored provenance must match the resolved seed, layer, covariates, model
+  arguments, training arguments, accelerator, devices, and config fingerprint.
+- A non-empty persisted scVI model and a passing machine-readable checkpoint
+  report are required before clustering.
 
 ## Single-Cell Constraints
 
@@ -61,6 +108,18 @@
   replicates; cell counts must not inflate the apparent sample size.
 - Outputs generated from demo fixtures are not biological evidence.
 - Stochastic stages must use the configured seed and record it with outputs.
+
+## Clustered Checkpoint Reconstruction
+
+- Neighbours, UMAP, and Leiden parameters, backend, worker limit, resolution,
+  iteration count, and seed must be explicit and preserved in provenance.
+- The clustered checkpoint must preserve the exact ordered cell and gene
+  identities of the accepted scVI checkpoint.
+- UMAP coordinates and sparse graph values must be finite, graphs must match
+  the cell-by-cell shape, and every cell must receive a Leiden label.
+- A passing machine-readable cluster report is required before CellTypist
+  annotation. Similarity to a historical partition is diagnostic evidence, not
+  an automatic pass/fail threshold or biological validation.
 
 ## External Resources And Environments
 

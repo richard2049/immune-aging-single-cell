@@ -1,9 +1,9 @@
 # Pseudobulk DE One-Million-Cell Run Technical Acceptance
 
 > [!IMPORTANT]
-> This is a historical execution record. Current technical acceptance is
-> suspended until the annotated checkpoint and dependent pseudobulk outputs are
-> regenerated under the current provenance and validation contract.
+> This execution record is superseded by decision 011. The accepted model did
+> not account for repeated samples within subjects and used the wrong study
+> identity. It is retained only as historical provenance.
 
 ## Scope
 

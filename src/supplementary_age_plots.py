@@ -58,10 +58,10 @@ def _prepare_comp_effects(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame()
     out["signal_id"] = df["cell_type"].astype(str)
     out["label"] = df["cell_type"].astype(str)
-    out["effect"] = pd.to_numeric(df.get("slope_per_10y"), errors="coerce")
-    out["ci_low"] = pd.to_numeric(df.get("slope_per_10y_ci_low"), errors="coerce")
-    out["ci_high"] = pd.to_numeric(df.get("slope_per_10y_ci_high"), errors="coerce")
-    out["fdr"] = pd.to_numeric(df.get("spearman_fdr"), errors="coerce")
+    out["effect"] = pd.to_numeric(df.get("association_effect_per_10y"), errors="coerce")
+    out["ci_low"] = pd.to_numeric(df.get("association_effect_ci_low"), errors="coerce")
+    out["ci_high"] = pd.to_numeric(df.get("association_effect_ci_high"), errors="coerce")
+    out["fdr"] = pd.to_numeric(df.get("association_fdr"), errors="coerce")
     if "fdr_significant" in df.columns:
         out["significant"] = _safe_bool_series(df["fdr_significant"])
     else:
@@ -170,7 +170,7 @@ def _plot_effect_ci_forest(
         panel_title="Signature-age associations",
         xlabel="Effect per 10y (signature-score units)",
     )
-    fig.suptitle("Supplementary: Donor-level age effects with 95% bootstrap CIs", y=1.02)
+    fig.suptitle("Supplementary: Subject-aware age effects with 95% CIs", y=1.02)
     finalize_and_save(fig, path, dpi)
 
 

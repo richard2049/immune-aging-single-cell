@@ -21,6 +21,17 @@ dependencies:
   - pandas=2.3.*
   - scipy=1.15.*
   - scikit-learn=1.7.*
+  # Qualified on Windows with NumPy 2.2.6 and SciPy 1.15.2. Newer
+  # BLAS/LAPACK 3.11 builds caused native SVD hangs in this stack.
+  - libblas=3.9.*=*_mkl
+  - libcblas=3.9.*=*_mkl
+  - liblapack=3.9.*=*_mkl
+  - mkl=2024.2.*
+  - intel-openmp=2024.2.*
+  - tbb=2021.13.*
+  # On Windows, inspect the resolved transaction for llvm-openmp alongside
+  # intel-openmp. A mixed runtime caused OMP Error #15 in the qualified local
+  # environment; see docs/troubleshooting.md before accepting that solve.
   # The current workflow does not request XGBoost's GPU backend. Keeping its
   # CPU build avoids introducing an unrelated CUDA runtime into this env.
   - xgboost=2.1.*=cpu_*

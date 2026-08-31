@@ -1,11 +1,23 @@
-cfg_path: config/gse164378_1m.yaml
+cfg_path: config/blood_age_atlas_1m.yaml
+
+study:
+  id: blood_age_atlas
+  title: Single-Cell Atlas of Human Blood During Healthy Aging
+  publication: Terekhova et al. 2023
+  synapse_accession: syn49637038
+  hca_project_label: BloodAge10xArtyomov
+  hca_project_id: 896f377c-8e88-463e-82b0-b2a5409d6fe4
 
 project:
   name: immune_aging_scvi
-  # Fixed one-million-cell GSE164378 profile. Use a local config for variants.
-  # The output path predates the explicit 1M profile name and is retained for
-  # compatibility with the validated checkpoint.
-  out_dir: results/gse164378_full
+  # Fixed one-million-cell Blood Age Atlas profile. Historical GSE-labelled
+  # directories are immutable and are never used as an output target.
+  out_dir: results/blood_age_atlas_1m
+
+biological_units:
+  subject_col: donor_id
+  sample_unit_col: tube_id
+  technical_library_col: file_name
 
 run:
   dataset: custom_h5ad
@@ -26,7 +38,7 @@ metadata:
   table_sep: ","
   obs_join_key: obs_names
   table_join_key: cell_id
-  table_columns: ["donor_id", "age", "sex", "age_group", "batch"]
+  table_columns: ["donor_id", "age", "sex", "age_group", "batch", "tube_id", "file_name"]
   auto_standardize_columns: true
   rename_columns: {}
   sample_field: sample_id
@@ -66,10 +78,55 @@ scvi:
   # after installing and validating a CUDA-enabled PyTorch build.
   accelerator: cpu
   devices: 1
+  model_args:
+    n_hidden: 128
+    n_latent: 10
+    n_layers: 1
+    dropout_rate: 0.1
+    dispersion: gene
+    gene_likelihood: zinb
+    use_observed_lib_size: true
+    latent_distribution: normal
+  training_args:
+    # Explicit equivalent of the scvi-tools 1.3.3 heuristic at 1,000,000 cells.
+    max_epochs: 8
+    batch_size: 128
+    early_stopping: false
+    train_size: 0.9
+    validation_size: null
+    shuffle_set_split: true
+    load_sparse_tensor: false
 
 clustering:
+  n_jobs: 1
   use_rep: X_scVI
   leiden_resolution: 0.8
+  neighbors_args:
+    n_neighbors: 15
+    n_pcs: null
+    knn: true
+    method: umap
+    transformer: null
+    metric: euclidean
+    metric_kwds: {}
+  umap_args:
+    min_dist: 0.5
+    spread: 1.0
+    n_components: 2
+    maxiter: null
+    alpha: 1.0
+    gamma: 1.0
+    negative_sample_rate: 5
+    init_pos: spectral
+    a: null
+    b: null
+    method: umap
+  leiden_args:
+    directed: null
+    use_weights: true
+    n_iterations: 2
+    neighbors_key: null
+    flavor: leidenalg
 
 celltypist:
   enabled: true
@@ -92,7 +149,9 @@ report:
 
 composition_age:
   age_col: age
-  donor_col: donor_id
+  donor_col: tube_id
+  sample_unit_col: tube_id
+  subject_col: donor_id
   celltype_col: cell_type
   covariate_cols: ["sex", "batch"]
   adjust_covariates: true
@@ -113,7 +172,9 @@ composition_age:
 
 signature_age:
   age_col: age
-  donor_col: donor_id
+  donor_col: tube_id
+  sample_unit_col: tube_id
+  subject_col: donor_id
   celltype_col: cell_type
   sex_col: sex
   covariate_cols: ["sex", "batch"]
@@ -138,8 +199,7 @@ pseudobulk_de_feasibility:
   count_layer: null
   age_col: age
   donor_col: donor_id
-  # `donor_id` labels are reused across pools. `tube_id` is the stable
-  # biological replicate identifier in the source cell metadata.
+  # Aggregate by longitudinal sample while retaining donor as the dependency group.
   replicate_col: tube_id
   replicate_table_path: data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv
   replicate_table_join_key: cell_id
@@ -158,7 +218,9 @@ pseudobulk_de_feasibility:
 age_prediction:
   latent_key: X_scVI
   age_col: age
-  donor_col: donor_id
+  donor_col: tube_id
+  sample_unit_col: tube_id
+  group_col: donor_id
   celltype_col: cell_type
   clip_predictions_to_train_age_range: true
   sampling_strategy: stratified

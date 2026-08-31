@@ -7,6 +7,10 @@ import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
 
+class NonEstimableDesignError(ValueError):
+    """Raised when a prespecified model design is not identifiable."""
+
+
 def placeholders_allowed(config: dict) -> bool:
     """Return whether the active profile explicitly permits placeholder outputs."""
     return bool(config.get("run", {}).get("allow_placeholder_outputs", False))
@@ -120,7 +124,7 @@ def build_complete_nuisance_design(
     design = np.concatenate([intercept, *matrices], axis=1) if matrices else intercept
     rank = int(np.linalg.matrix_rank(design))
     if rank != design.shape[1]:
-        raise ValueError(
+        raise NonEstimableDesignError(
             f"{context}: nuisance design is rank deficient "
             f"(rank={rank}, columns={design.shape[1]})."
         )

@@ -1,13 +1,13 @@
 # Corrected Public-Promotion Record
 
 > [!IMPORTANT]
-> This historical promotion record is not currently active. The underlying
-> checkpoint and affected downstream results are pending requalification under
-> the current scientific safeguards.
+> This record is superseded by decision 011. It treated `Tube_id` sample units
+> as independent people and used the wrong study identity. Every authorization
+> below is historical and withdrawn.
 
 ## Status
 
-**Approved source text and captions for corrected public promotion.**
+**Withdrawn historical promotion record; no current public claim is authorized.**
 
 - Public scope: conservative core
 - Signature heatmap: not selected for curated public assets

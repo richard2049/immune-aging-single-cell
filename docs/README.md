@@ -15,24 +15,34 @@ without relying on generated result directories.
 
 - [Analysis decisions](analysis_decisions.md)
 - [Scientific verification contract](verification_contract.md)
+- [Annotation mapping review](annotation_mapping_review_guide.md)
+- [Completed annotation mapping review record](reviews/annotation_mapping_review.yml)
 - [Pseudobulk differential-expression design](pseudobulk_de_design.md)
 - [Pseudobulk differential-expression workflow](pseudobulk_de.md)
 
-## Validation and reviewed evidence
+## Current Validation
 
-- [Corrected-results review](corrected_results_review.md)
-- [Pseudobulk robustness audit](pseudobulk_robustness_audit.md)
-- [edgeR runtime qualification](validation/pseudobulk_de_runtime_qualification.md)
-- [One-million-cell pseudobulk acceptance](validation/pseudobulk_de_1m_run_acceptance.md)
-- [Demo workflow end-to-end qualification](validation/demo_end_to_end.md)
-- [Repository readiness audit](validation/repository_readiness_audit.md)
-- [Corrected-result dispositions](reviews/corrected_results_dispositions.yml)
-- [Pseudobulk diagnostic review](reviews/pseudobulk_diagnostic_plot_review.yml)
-- [Corrected public-promotion record](reviews/corrected_public_promotion_record.md)
+The reconstructed scVI, clustering, and CellTypist checkpoints passed their
+configured identity, provenance, and output gates. The approved annotation
+mapping then qualified ten broad primary populations for method-specific use.
+Subject-aware composition, signature, prediction, sensitivity, and pseudobulk
+stages have completed, and the bounded and full `dream` runs pass technical
+validation. These checks establish traceability and technical acceptance only;
+human biological review remains pending, and no current result is approved as
+a public biological claim.
 
-## Provenance and archived material
+## Superseded Historical Evidence
 
 - [Historical GSE164378 pilot manifest](archive/gse164378_pilot_manifest.md)
+- [Former corrected-results review](corrected_results_review.md)
+- [Former pseudobulk robustness audit](pseudobulk_robustness_audit.md)
+- [Former edgeR runtime qualification](validation/pseudobulk_de_runtime_qualification.md)
+- [Former one-million-cell pseudobulk acceptance](validation/pseudobulk_de_1m_run_acceptance.md)
+- [Former result dispositions](reviews/corrected_results_dispositions.yml)
+- [Former public-promotion record](reviews/corrected_public_promotion_record.md)
+
+These records preserve provenance for the superseded Tube-as-independent-unit
+analysis. They must not be used as current evidence or copied into new claims.
 
 Raw data, generated results, trained models, and local execution evidence are
 not versioned. Selected figures used by tracked documentation are stored in

@@ -1,154 +1,64 @@
-# Donor-Aware Pseudobulk Differential Expression
+# Longitudinal Pseudobulk Workflow
 
-## Scope
+The maintained pseudobulk path is part of `workflows/Snakefile.longitudinal`
+and uses `config/blood_age_atlas_longitudinal.yaml`.
 
-This targeted stage tests age-associated expression within approved immune
-cell populations while treating `biological_replicate_id` as the experimental
-unit. It does not treat cells or technical libraries as independent
-replicates.
+## Stages
 
-The implementation is technically validated on both a bounded fixture and the
-one-million-cell GSE164378 corrected-replicate checkpoint. The complete
-gene-level result set for that checkpoint has not yet undergone biological
-interpretation, so this document defines an execution and technical acceptance
-contract rather than a biological conclusion.
+1. `src.pseudobulk_aggregate` validates integer sparse counts and writes a
+   profiles-by-genes Matrix Market matrix plus profile and gene metadata.
+2. `src.run_pseudobulk_dream` invokes the pinned R/Bioconductor runtime.
+3. `src.pseudobulk_dream.R` fits the repeated-measures primary model and the
+   one-sample-per-subject sensitivity.
+4. `src.validate_pseudobulk_de` checks count conservation, metadata, designs,
+   model scopes, FDR calculations, versions, logs, and output containment.
 
-## Approved Contract
+## Outputs
 
-- Sum raw counts within each `biological_replicate_id x cell_type` profile.
-- Require at least 50 cells per profile, 12 qualifying replicates, 12 years of
-  age coverage, and five residual model degrees of freedom.
-- Analyze 12 well-supported populations as primary and NK cells as
-  exploratory.
-- Model continuous age in decades with `~ sex + batch + age_decade`.
-- Use an age-only sensitivity model only when the adjusted design is not
-  estimable; never drop covariates silently.
-- Use edgeR quasi-likelihood, TMM normalization, and design-aware
-  `filterByExpr`.
-- Report BH FDR within each cell type and globally across all tested
-  gene-cell-type combinations.
+Under `results/blood_age_atlas_longitudinal/pseudobulk_de/`:
 
-## Runtime
+- `pseudobulk_counts.mtx.gz`
+- `pseudobulk_profiles.csv`
+- `pseudobulk_genes.csv`
+- `celltype_eligibility.csv`
+- `aggregation_audit.json`
+- `gene_level_results.csv.gz`
+- `one_sample_per_subject_results.csv.gz`
+- `celltype_result_manifest.csv`
+- `design_diagnostics.csv`
+- `dream_diagnostic_plots.pdf`
+- `runtime_versions.csv`
+- `session_info.txt`
+- `dream.log`
+- `technical_validation.json`
 
-The Dockerfile pins the Bioconductor 3.23 base-image digest and verifies:
+## Targeted Commands
 
-- R 4.6.x;
-- Bioconductor 3.23;
-- edgeR 4.10.1.
-
-Build the image from PowerShell:
+Build the pinned container once and inspect the build log:
 
 ```powershell
-docker --context desktop-linux build --progress plain `
-  -t immune-aging-edger:bioc-3.23-edger-4.10.1 `
-  -f containers/edger/Dockerfile .
+docker --context desktop-linux build `
+  -t immune-aging-dream:bioc-3.23-dream-1.42.0 `
+  containers/dream
 ```
 
-Run the optional bounded integration test:
+Run only pseudobulk technical validation and its dependencies:
 
 ```powershell
-$env:RUN_EDGER_DOCKER_TESTS = "1"
-python -m unittest `
-  tests.test_pseudobulk_de.PseudobulkDifferentialExpressionTests.test_pinned_edger_runtime_on_bounded_fixture `
-  -v
+python -m snakemake -s workflows/Snakefile.longitudinal -c 1 `
+  --configfile config/blood_age_atlas_longitudinal.yaml `
+  results/blood_age_atlas_longitudinal/pseudobulk_de/technical_validation.json `
+  --rerun-incomplete --printshellcmds
 ```
 
-## One-Million-Cell Target
-
-The stage is intentionally absent from the default workflow target. Run it
-explicitly:
+Revalidate completed outputs without recomputation:
 
 ```powershell
-python -m snakemake `
-  -s workflows/Snakefile.replicate_corrected `
-  -c 1 pseudobulk_de_corrected `
-  --configfile config/gse164378_corrected.yaml `
-  --printshellcmds
+python -m src.validate_pseudobulk_de `
+  --config config/blood_age_atlas_longitudinal.yaml `
+  --outdir results/blood_age_atlas_longitudinal/pseudobulk_de `
+  --report results/blood_age_atlas_longitudinal/pseudobulk_de/technical_validation.json
 ```
 
-Validate existing outputs without rerunning aggregation or edgeR:
-
-```powershell
-python -u -m src.validate_pseudobulk_de `
-  --config config/gse164378_corrected.yaml `
-  --outdir results/gse164378_full_replicate_corrected/pseudobulk_de `
-  --report results/gse164378_full_replicate_corrected/pseudobulk_de/technical_validation.json
-```
-
-The aggregation command prints cell progress. The edgeR wrapper streams output
-to the terminal, writes `edgeR.log`, records the working directory and command,
-and enforces the configured timeout.
-
-## Output Contract
-
-Outputs are written under
-`results/gse164378_full_replicate_corrected/pseudobulk_de/`:
-
-- `pseudobulk_counts.mtx.gz`: sparse profile-by-gene raw-count matrix;
-- `pseudobulk_profiles.csv`: profile metadata and library sizes;
-- `pseudobulk_genes.csv`: ordered gene identifiers;
-- `celltype_eligibility.csv`: inclusion status and explicit reasons;
-- `aggregation_audit.json`: count-conservation and provenance checks;
-- `gene_level_results.csv.gz`: combined gene-level results;
-- `by_cell_type/*.csv.gz`: cell-type-specific result tables;
-- `celltype_result_manifest.csv`: per-cell-type result index;
-- `design_diagnostics.csv`: support, rank, residual df, and model status;
-- `edgeR_diagnostic_plots.pdf`: technical mean-difference plots;
-- `runtime_versions.csv`, `session_info.txt`, and `edgeR.log`: runtime
-  provenance.
-- `technical_validation.json`: machine-readable acceptance checks and a compact
-  run inventory, explicitly separated from biological interpretation.
-
-These outputs remain analytical results pending review. Pathway enrichment,
-public gene-level figures, and biological claims require a separate human
-scientific interpretation review.
-
-## One-Million-Cell Execution Status
-
-The corrected one-million-cell run completed on 2026-07-31. It produced 2,944
-pseudobulk profiles from 317 biological replicates and 107,948 tests across 13
-cell types. All populations used the approved adjusted model, and the technical
-validator passed. See
-`docs/validation/pseudobulk_de_1m_run_acceptance.md` for the acceptance record
-and remaining manual review requirements.
-
-## Robustness Audit And Evidence Preparation
-
-The predefined robustness audit reuses the validated pseudobulk counts and
-primary result table. It evaluates a higher profile-cell floor,
-covariate-omission diagnostics, and leave-one-batch-out models. These models do
-not replace the adjusted primary analysis and are not independent replications.
-
-The predefined audit completed on 2026-08-02. It preserved 7,970 global-FDR
-candidate rows, recorded 212 completed and three explicitly non-estimable
-cell-type-by-scenario models, and produced a bounded 249-row manual-review
-queue. No model failed. See `docs/pseudobulk_robustness_audit.md` for the
-technical record and interpretation boundary.
-
-Run the sensitivity models explicitly:
-
-```powershell
-python -u -m src.run_pseudobulk_robustness `
-  --config config/gse164378_corrected.yaml `
-  --matrix results/gse164378_full_replicate_corrected/pseudobulk_de/pseudobulk_counts.mtx.gz `
-  --profiles results/gse164378_full_replicate_corrected/pseudobulk_de/pseudobulk_profiles.csv `
-  --genes results/gse164378_full_replicate_corrected/pseudobulk_de/pseudobulk_genes.csv `
-  --primary-results results/gse164378_full_replicate_corrected/pseudobulk_de/gene_level_results.csv.gz `
-  --sensitivity-out results/gse164378_full_replicate_corrected/pseudobulk_de/robustness/sensitivity_gene_results.csv.gz `
-  --diagnostics-out results/gse164378_full_replicate_corrected/pseudobulk_de/robustness/scenario_diagnostics.csv `
-  --manifest-out results/gse164378_full_replicate_corrected/pseudobulk_de/robustness/scenario_manifest.csv `
-  --log-out results/gse164378_full_replicate_corrected/pseudobulk_de/robustness/edgeR_robustness.log
-```
-
-After recording the diagnostic-plot review, prepare the evidence tables:
-
-```powershell
-python -m src.prepare_pseudobulk_evidence `
-  --config config/gse164378_corrected.yaml `
-  --pseudobulk-dir results/gse164378_full_replicate_corrected/pseudobulk_de `
-  --report-out docs/pseudobulk_robustness_audit.md
-```
-
-The compact `review_queue.csv` is a workload-management artifact. Selection
-for that table does not approve a gene, pathway, or biological claim. Any such
-disposition requires a separate human scientific review.
+These commands establish technical reviewability only. Gene- and pathway-level
+interpretation requires a later D-stage decision and human review.
