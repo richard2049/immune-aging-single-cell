@@ -54,9 +54,10 @@ New checkpoints and outputs use `blood_age_atlas` namespaces. Historical
 workflow no longer invokes historical comparison, disposition, or public-asset
 generators.
 
-Technical acceptance does not authorize a biological claim. Cell-population,
-gene, pathway, predictive, causal, or clinical interpretation requires a later
-D-stage human review.
+Passing technical checks is necessary but not sufficient for biological
+interpretation. Conclusions about cell populations, genes, pathways,
+predictive performance, causality, or clinical relevance require a separate
+scientific review.
 
 ## Interpretation Boundary
 

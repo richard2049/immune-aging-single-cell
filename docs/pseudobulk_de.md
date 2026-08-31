@@ -60,5 +60,7 @@ python -m src.validate_pseudobulk_de `
   --report results/blood_age_atlas_longitudinal/pseudobulk_de/technical_validation.json
 ```
 
-These commands establish technical reviewability only. Gene- and pathway-level
-interpretation requires a later D-stage decision and human review.
+These commands verify the technical integrity of the outputs. Gene- and
+pathway-level interpretation should begin only after a separate scientific
+review of the model diagnostics, sensitivity analyses, and candidate-level
+evidence.

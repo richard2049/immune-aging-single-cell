@@ -16,7 +16,7 @@ without relying on generated result directories.
 - [Analysis decisions](analysis_decisions.md)
 - [Scientific verification contract](verification_contract.md)
 - [Annotation mapping review](annotation_mapping_review_guide.md)
-- [Completed annotation mapping review record](reviews/annotation_mapping_review.yml)
+- [Completed annotation mapping review](reviews/annotation_mapping_review.yml)
 - [Pseudobulk differential-expression design](pseudobulk_de_design.md)
 - [Pseudobulk differential-expression workflow](pseudobulk_de.md)
 
@@ -27,9 +27,8 @@ configured identity, provenance, and output gates. The approved annotation
 mapping then qualified ten broad primary populations for method-specific use.
 Subject-aware composition, signature, prediction, sensitivity, and pseudobulk
 stages have completed, and the bounded and full `dream` runs pass technical
-validation. These checks establish traceability and technical acceptance only;
-human biological review remains pending, and no current result is approved as
-a public biological claim.
+validation. These checks establish traceability and technical validity, but
+biological interpretation of the regenerated results is still pending.
 
 ## Superseded Historical Evidence
 
@@ -41,8 +40,9 @@ a public biological claim.
 - [Former result dispositions](reviews/corrected_results_dispositions.yml)
 - [Former public-promotion record](reviews/corrected_public_promotion_record.md)
 
-These records preserve provenance for the superseded Tube-as-independent-unit
-analysis. They must not be used as current evidence or copied into new claims.
+These records preserve provenance for the superseded analysis that treated
+sample units as independent. They are historical only and should not be used to
+interpret results from the current workflow.
 
 Raw data, generated results, trained models, and local execution evidence are
 not versioned. Selected figures used by tracked documentation are stored in

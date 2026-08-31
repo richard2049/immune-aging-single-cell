@@ -58,7 +58,7 @@
   configuration, or a second nonconvergence must stop rather than trigger an
   additional substitute model.
 - Fallback estimates remain subject to the prespecified one-sample-per-subject
-  comparison and cannot independently authorize a biological claim.
+  comparison and are insufficient on their own for biological interpretation.
 
 ## Cross-Validation And Prediction
 

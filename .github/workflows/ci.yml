@@ -66,14 +66,18 @@ jobs:
           python --version
           python -c "import anndata, pandas, scanpy, scvi, snakemake; print('anndata', anndata.__version__); print('pandas', pandas.__version__); print('scanpy', scanpy.__version__); print('scvi-tools', scvi.__version__); print('snakemake', snakemake.__version__)"
 
+      - name: Install test dependencies
+        shell: micromamba-shell {0}
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
       - name: Run unit tests
         shell: micromamba-shell {0}
-        run: python -m unittest discover -s tests -v
+        run: python -m pytest -q
 
       - name: Construct the demo workflow DAG
         shell: micromamba-shell {0}
         run: python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/demo.yaml --printshellcmds
 
-      - name: Parse the replicate-corrected workflow
+      - name: Parse the longitudinal workflow
         shell: micromamba-shell {0}
-        run: python -m snakemake -s workflows/Snakefile.replicate_corrected --configfile config/gse164378_corrected.yaml --list
+        run: python -m snakemake -s workflows/Snakefile.longitudinal --configfile config/blood_age_atlas_longitudinal.yaml --list

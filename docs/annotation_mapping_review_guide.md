@@ -240,12 +240,12 @@ repeat the following steps:
 4. Implement the approved composition-denominator decision.
 5. Regenerate only `annotation_design_qualification`.
 6. Confirm mapping and evidence fingerprints, 84 unique labels, reconciled cell
-   totals, and absence of any approval sentinel before final review.
+   totals, and absence of an approval file before final review.
 7. Record the final mapping hash and reviewer confirmation in the YAML.
 8. Run `annotation_design_approval`; only then may downstream targets execute.
 
 Any mapping change after approval invalidates the qualification report,
-approval sentinel, and all affected downstream outputs.
+approval file, and all affected downstream outputs.
 
 ## Optional Secondary Subtype Validation
 

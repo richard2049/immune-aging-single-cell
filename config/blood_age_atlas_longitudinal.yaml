@@ -144,7 +144,8 @@ pseudobulk_de:
 
 pseudobulk_robustness:
   # These scenarios diagnose robustness; they do not replace the primary
-  # adjusted model or approve biological claims. See
+  # adjusted model and are not, by themselves, evidence for biological
+  # interpretation. See
   # docs/pseudobulk_robustness_audit.md.
   candidate_global_fdr_threshold: 0.05
   high_cell_min_cells: 100
