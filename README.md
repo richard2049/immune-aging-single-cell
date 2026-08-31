@@ -60,6 +60,25 @@ Snakemake or another conda operation. If channel downloads fail, follow the
 network checks in `docs/troubleshooting.md`; do not continue with workflow
 validation in the stale environment.
 
+### Optional NVIDIA GPU Environment
+
+`environment.yml` is the portable CPU contract used by CI. On a supported
+NVIDIA system, create the separately qualified CUDA 12.1 environment:
+
+```powershell
+conda env create -n immune-aging-scvi-gpu -f environment-gpu.yml
+conda activate immune-aging-scvi-gpu
+python -c "import torch, scvi; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+The CUDA-enabled PyTorch build can execute either backend. Select `cpu` or
+`gpu` through `scvi.accelerator` in the local config used for the run; changing
+the accelerator does not replace the accepted seed, covariates, or input
+contract. Qualify both modes with a bounded smoke test before a large run and
+use a CPU profile when CUDA is unavailable. See
+[`docs/troubleshooting.md`](docs/troubleshooting.md#gpu-training) for the
+driver and runtime checks.
+
 Windows/PowerShell equivalent:
 ```powershell
 python -m snakemake -s workflows/Snakefile -c 1 --configfile config/demo.yaml
@@ -181,9 +200,9 @@ $dev_python = Join-Path (Resolve-Path ".venv-dev") "Scripts\python.exe"
 & $dev_python -m ruff format --check src tests workflows
 ```
 
-Enable GPU training only after installing a CUDA-enabled PyTorch build and
-validating CUDA locally, then set `scvi.accelerator: gpu` in the config profile
-you are running.
+The optional GPU profile is not exercised by GitHub Actions because hosted and
+local GPU drivers are machine-specific. Its scientific Python versions match
+the CPU contract, while the PyTorch backend is qualified separately.
 
 ## GSE164378 Requalification Status
 
@@ -263,7 +282,9 @@ and inheritance are documented in `docs/configuration.md`.
 
 ## Notes
 - Default configs use CPU for portability on Windows/macOS/Linux and match the
-  CPU-only PyTorch environment in `environment.yml`.
+  CPU-only PyTorch environment in `environment.yml`. The optional
+  `environment-gpu.yml` can run those same profiles on CPU or a locally
+  qualified NVIDIA GPU.
 - Large data files and `results/` are gitignored.
 - Use `config/gse164378_pilot.yaml` for the bounded 50,000-cell GSE164378
   smoke run and `config/gse164378_1m.yaml` for the accepted one-million-cell
