@@ -27,6 +27,13 @@ selecting earliest observed age and then lexical sample ID. This sensitivity
 does not replace the repeated-measures model, and agreement is not automatic
 biological validation.
 
+The composition sensitivity fits a binomial GEE with independence working
+correlation, relative cell-count weights, and a robust covariance estimate at
+the person level. The trend table records the sensitivity model, covariance
+type, and standard error. Composition GEE effects are in log-odds per decade.
+Use a fresh output directory when regenerating these results so saved
+sensitivity tables from earlier runs are recalculated.
+
 ## Age Prediction
 
 Outer and inner cross-validation folds are grouped by `subject_id`; all visits
