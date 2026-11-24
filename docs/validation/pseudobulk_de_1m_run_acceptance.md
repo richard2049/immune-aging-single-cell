@@ -93,7 +93,6 @@ row counts.
   exploratory NK population.
 - The pre-specified robustness audit completed 212 sensitivity models and
   recorded three non-estimable scenarios without substituting another model.
-  See `docs/pseudobulk_robustness_audit.md`.
 
 ## Remaining Review
 

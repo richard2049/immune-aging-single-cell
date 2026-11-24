@@ -1,12 +1,14 @@
 # data + outputs
-data/raw/
-data/derived/
-results/
+/data/
+/results/
 *.h5ad
 *.h5
 *.loom
 *.mtx
 *.mtx.gz
+*.pkl
+*.pt
+*.ckpt
 
 # python
 __pycache__/
@@ -14,22 +16,53 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 .venv-dev/
-.env/
+.env
+.env.*
+!.env.example
 .tmp/
 tmp/
 cache/
 .ruff_cache/
+.pytest_cache/
 
 # editable local analysis profiles
 config/*.local.yaml
+config/*.local.yml
 
-# versioned documentation assets
-!docs/assets/
-docs/assets/*
-!docs/assets/.gitkeep
-!docs/assets/*.png
-!docs/assets/*.jpg
-!docs/assets/*.jpeg
-!docs/assets/*.webp
+# Local evidence, working notes, and exports
+/.local/
+/.agents/
+/.codex/
+/.codex-staging/
+/.aws/
+/reports/
+/notebooks/
+/reproducers/
+/AGENTS.md
+/IMMUNE-AGING_NOTES.md
+/condaenv.*.requirements.txt
+/docs/interview_prep.md
+/docs/question_bank.md
+/docs/no_ai_drills.md
+/docs/repo_retrospective.md
+/docs/decisions/
+/docs/templates/
+/docs/corrected_results_review.md
+/docs/pseudobulk_robustness_audit.md
+/docs/archive/gse164378_pilot_manifest.md
+/docs/reviews/*
+!/docs/reviews/annotation_mapping_review.yml
+/docs/validation/repository_readiness_audit.md
+/docs/validation/scientific_reproducibility_remediation.md
+*.xlsx
+*.xlsm
+*.docx
+*.pptx
+
+# Approved documentation assets, listed by exact path
+/docs/assets/*
+!/docs/assets/.gitkeep
+!/docs/assets/blood_age_atlas_composition_effects.png
+!/docs/assets/blood_age_atlas_composition_summary.csv
 
 .snakemake/

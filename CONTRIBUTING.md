@@ -53,6 +53,18 @@ change pass.
 ## Pull requests
 
 A pull request should describe its scope, the validation performed, and any
-remaining scientific or technical limitations. Avoid committing raw data,
-generated `results/`, trained models, credentials, local paths, or environment
-directories.
+remaining scientific or technical limitations.
+
+Use the public repository for code, documented methods and provenance,
+environment specifications, configuration examples, tests, and reviewed
+results that help readers reproduce or assess the workflow. Cite the accession
+and document how to obtain the inputs under their access terms. Store private
+notes, intermediate reviews, participant-level extracts, generated results,
+and local configuration under ignored paths such as `.local/`, `data/`, or
+`results/`.
+
+Review the paths and contents of every outgoing commit before pushing to any
+public branch or tag. Check PR text, attachments, and release files before
+publishing. Publish a figure or table only after reviewing its provenance,
+data permissions, identifiers, and scientific claims. Add new documentation
+assets to the ignore exceptions by exact path.
