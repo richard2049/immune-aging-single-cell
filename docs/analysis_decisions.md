@@ -42,6 +42,11 @@ subjects, and bootstrap intervals resample subjects. The scVI representation is
 still learned from the full cohort, so performance is internal and transductive,
 not fully inductive or externally validated.
 
+The paired model-comparison table uses the primary metric level recorded
+in the metrics. Blood Age Atlas uses one prediction per visit. Its comparison
+intervals resample the paired outer-fold MAE differences. The headline MAE
+intervals resample subjects.
+
 ## Pseudobulk
 
 Raw counts are summed by `sample_unit_id x cell_type` with exact count

@@ -1360,25 +1360,38 @@ def _build_model_comparison_summary(
     if pred_all.empty or metrics.empty:
         return pd.DataFrame(columns=SUMMARY_COLUMNS)
 
-    pred_all = pred_all.copy()
-    if "evaluation_level" in pred_all.columns:
-        primary_rows = pred_all[pred_all["evaluation_level"].astype(str) == "donor"].copy()
-        if primary_rows.empty:
-            primary_rows = pred_all[
-                pred_all["evaluation_level"].astype(str) == "donor_celltype"
-            ].copy()
-        if primary_rows.empty:
-            primary_rows = pred_all.copy()
-    else:
-        primary_rows = pred_all.copy()
-    primary_rows["model_key"] = primary_rows["model"] + "||" + primary_rows["params"].astype(str)
+    level_aliases = {
+        "sample_unit": "donor",
+        "donor": "sample_unit",
+        "sample_unit_celltype": "donor_celltype",
+        "donor_celltype": "sample_unit_celltype",
+    }
+    if "primary_level" not in metrics or "evaluation_level" not in pred_all:
+        raise ValueError("Model comparison requires primary and prediction evaluation levels.")
+    primary_levels = metrics["primary_level"].unique()
+    if len(primary_levels) != 1 or primary_levels[0] not in level_aliases:
+        raise ValueError("Model comparison requires one supported primary evaluation level.")
+    primary_level = primary_levels[0]
+    primary_rows = pred_all.loc[
+        pred_all["evaluation_level"].isin([primary_level, level_aliases[primary_level]])
+    ]
+    if primary_rows["evaluation_level"].nunique() != 1:
+        raise ValueError(
+            f"Model comparison requires exactly one set of {primary_level} predictions."
+        )
+    if (
+        primary_rows[["model", "params", "fold"]].isna().any(axis=None)
+        or not np.isfinite(primary_rows["abs_error"]).all()
+    ):
+        raise ValueError(
+            "Model comparison requires complete model and fold keys and finite errors."
+        )
 
     fold_mae = (
-        primary_rows.groupby(["model", "params", "model_key", "fold"], observed=False)["abs_error"]
+        primary_rows.groupby(["fold", "model", "params"], observed=True)["abs_error"]
         .mean()
-        .reset_index(name="fold_mae")
+        .unstack(["model", "params"])
     )
-    pivot = fold_mae.pivot(index="fold", columns="model_key", values="fold_mae")
 
     ridge_rows = metrics[metrics["is_best_ridge"]]
     if ridge_rows.empty:
@@ -1386,26 +1399,25 @@ def _build_model_comparison_summary(
     else:
         ref_row = ridge_rows.iloc[0]
 
-    ref_key = f"{ref_row['model']}||{ref_row['params']}"
-    if ref_key not in pivot.columns:
-        return pd.DataFrame(columns=SUMMARY_COLUMNS)
+    ref_key = (ref_row["model"], ref_row["params"])
+    if ref_key not in fold_mae:
+        raise ValueError("Model comparison is missing predictions for the reference model.")
+    ref = fold_mae[ref_key].to_numpy(dtype=float)
 
     summary_rows = []
     for row in metrics.itertuples(index=False):
-        cand_key = f"{row.model}||{row.params}"
-        if cand_key not in pivot.columns:
-            continue
-
-        pair = pivot[[ref_key, cand_key]].dropna()
-        if pair.empty:
-            continue
-        ref = pair[ref_key].to_numpy(dtype=float)
-        cand = pair[cand_key].to_numpy(dtype=float)
+        cand_key = (row.model, row.params)
+        if cand_key not in fold_mae:
+            raise ValueError(f"Model comparison is missing predictions for {cand_key}.")
+        cand = fold_mae[cand_key].to_numpy(dtype=float)
+        if not (np.isfinite(ref).all() and np.isfinite(cand).all()):
+            raise ValueError(f"Model comparison requires the same complete folds for {cand_key}.")
         delta = ref - cand  # >0 means candidate better (lower MAE)
 
-        winner_candidate = int(np.sum(delta > 0))
-        winner_reference = int(np.sum(delta < 0))
-        ties = int(np.sum(np.isclose(delta, 0.0)))
+        tied = np.isclose(delta, 0.0)
+        winner_candidate = int(np.sum((delta > 0) & ~tied))
+        winner_reference = int(np.sum((delta < 0) & ~tied))
+        ties = int(tied.sum())
         ci_low, ci_high, prob_gt0 = _bootstrap_mean_ci(
             delta, n_boot=n_boot, ci=ci, seed=seed + len(summary_rows)
         )
@@ -1418,11 +1430,11 @@ def _build_model_comparison_summary(
                 "candidate_params": row.params,
                 "candidate_is_best": bool(row.is_best),
                 "candidate_is_best_ridge": bool(row.is_best_ridge),
-                "n_folds_compared": int(pair.shape[0]),
+                "n_folds_compared": int(delta.size),
                 "winner_count_candidate": winner_candidate,
                 "winner_count_reference": winner_reference,
                 "tie_count": ties,
-                "win_fraction_candidate": float(winner_candidate / float(max(pair.shape[0], 1))),
+                "win_fraction_candidate": winner_candidate / delta.size,
                 "reference_mae_mean": float(np.mean(ref)),
                 "candidate_mae_mean": float(np.mean(cand)),
                 "delta_mae_mean": float(np.mean(delta)),
