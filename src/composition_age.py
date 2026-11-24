@@ -12,7 +12,6 @@ from scipy import stats
 from .annotation_mapping import attach_analysis_cell_types
 from .biological_replicates import attach_biological_replicates
 from .longitudinal_stats import (
-    fit_independent_age_model,
     fit_subject_aware_gee,
     select_one_sample_per_subject,
 )
@@ -374,6 +373,27 @@ def _build_donor_fraction_table(
     return out[keep]
 
 
+def _fit_one_sample_composition(
+    frame: pd.DataFrame,
+    *,
+    covariate_cols: list[str],
+    context: str,
+) -> dict:
+    subjects = frame["subject_id"].astype("string").str.strip()
+    if subjects.isna().any() or subjects.eq("").any() or subjects.duplicated().any():
+        raise ValueError(f"{context}: require one observation per subject with valid identifiers.")
+    return fit_subject_aware_gee(
+        frame,
+        outcome_col="fraction",
+        subject_col="subject_id",
+        covariate_cols=covariate_cols,
+        family="binomial",
+        weights_col="total_cells",
+        working_correlation="independence",
+        context=context,
+    )
+
+
 def _compute_trends(
     donor_fraction: pd.DataFrame,
     min_donors_per_celltype: int,
@@ -443,12 +463,9 @@ def _compute_trends(
             )
             if sensitivity_n_detected >= min_donors_per_celltype:
                 try:
-                    sensitivity_model = fit_independent_age_model(
+                    sensitivity_model = _fit_one_sample_composition(
                         sensitivity,
-                        outcome_col="fraction",
                         covariate_cols=covariate_cols if adjust_covariates else [],
-                        family="binomial",
-                        weights_col="total_cells",
                         context=f"one-sample composition sensitivity for {ct!r}",
                     )
                     sensitivity_status = "completed"
@@ -512,6 +529,13 @@ def _compute_trends(
                 "sensitivity_status": sensitivity_status,
                 "sensitivity_reason": sensitivity_reason,
                 "sensitivity_n_subjects": sensitivity_n_subjects,
+                "sensitivity_model": sensitivity_model["model"] if sensitivity_model else "",
+                "sensitivity_covariance_type": (
+                    sensitivity_model["covariance_type"] if sensitivity_model else ""
+                ),
+                "sensitivity_standard_error": (
+                    sensitivity_model["standard_error"] if sensitivity_model else np.nan
+                ),
                 "sensitivity_effect_per_10y": (
                     sensitivity_model["effect_per_10y"] if sensitivity_model else np.nan
                 ),
@@ -564,6 +588,9 @@ def _compute_trends(
                 "sensitivity_status",
                 "sensitivity_reason",
                 "sensitivity_n_subjects",
+                "sensitivity_model",
+                "sensitivity_covariance_type",
+                "sensitivity_standard_error",
                 "sensitivity_effect_per_10y",
                 "sensitivity_effect_ci_low",
                 "sensitivity_effect_ci_high",

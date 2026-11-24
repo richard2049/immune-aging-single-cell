@@ -3,13 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import pytest
+from scipy.special import logit
 
+from src.composition_age import _compute_trends, _fit_one_sample_composition
 from src.scientific_guardrails import NonEstimableDesignError
 from src.sensitivity_age import _outputs_complete
 from src.signature_age import _association_table
-from src.supplementary_age_plots import _prepare_comp_effects
+from src.supplementary_age_plots import _composition_effect_xlabel, _prepare_comp_effects
 
 
 def test_non_estimable_design_error_remains_a_value_error() -> None:
@@ -107,6 +110,75 @@ def test_outputs_complete_requires_every_nonempty_file(tmp_path: Path) -> None:
     assert _outputs_complete([first, second])
 
 
+@pytest.fixture
+def composition_people() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "subject_id": [f"S{index}" for index in range(8)],
+            "age": [30.0] * 4 + [70.0] * 4,
+            "fraction": [0.1, 0.15, 0.2, 0.25, 0.12, 0.2, 0.22, 0.3],
+            "total_cells": [100, 200, 300, 400, 200, 100, 400, 300],
+        }
+    )
+
+
+def test_composition_sensitivity_uses_person_level_uncertainty(
+    composition_people: pd.DataFrame,
+) -> None:
+    people = composition_people
+    # With two age groups the model is saturated. Each group logit is determined
+    # by its weighted mean, and its robust variance by the people in the group.
+    group_logits, group_variances = [], []
+    for _, group in people.groupby("age"):
+        weights = group["total_cells"].to_numpy()
+        fractions = group["fraction"].to_numpy()
+        mean = np.average(fractions, weights=weights)
+        group_logits.append(logit(mean))
+        group_variances.append(
+            np.sum((weights * (fractions - mean)) ** 2) / (weights.sum() * mean * (1 - mean)) ** 2
+        )
+    expected_effect = (group_logits[1] - group_logits[0]) / 4
+    expected_se = np.sqrt(sum(group_variances)) / 4
+    frame = people.assign(
+        donor_id=people["subject_id"],
+        cell_type="B cells",
+        n_cells=(people["fraction"] * people["total_cells"]).round().astype(int),
+    )
+    row = _compute_trends(
+        frame,
+        min_donors_per_celltype=3,
+        covariate_cols=[],
+        adjust_covariates=False,
+        bootstrap_iterations=10,
+        bootstrap_ci=0.95,
+        seed=42,
+        subject_aware=True,
+    ).iloc[0]
+    assert row["association_model"] == "GEE-binomial-exchangeable"
+    assert row["sensitivity_model"] == "GEE-binomial-independence"
+    assert row["sensitivity_covariance_type"] == "robust_subject_clustered"
+    assert row["sensitivity_n_subjects"] == len(people)
+    assert row["sensitivity_effect_per_10y"] == pytest.approx(expected_effect, abs=1e-10)
+    assert row["sensitivity_standard_error"] == pytest.approx(expected_se, abs=1e-10)
+
+    scaled = _fit_one_sample_composition(
+        people.assign(total_cells=people["total_cells"] * 100),
+        covariate_cols=[],
+        context="test scaled weights",
+    )
+    assert scaled["standard_error"] == pytest.approx(expected_se, abs=1e-10)
+
+
+@pytest.mark.parametrize("subject_id", ["S1", "", None])
+def test_composition_sensitivity_rejects_invalid_subject_groups(
+    composition_people: pd.DataFrame, subject_id: str | None
+) -> None:
+    people = composition_people.copy()
+    people.loc[0, "subject_id"] = subject_id
+    with pytest.raises(ValueError, match="one observation per subject"):
+        _fit_one_sample_composition(people, covariate_cols=[], context="test subject groups")
+
+
 def test_composition_supplement_uses_primary_association_fields() -> None:
     source = pd.DataFrame(
         {
@@ -130,3 +202,20 @@ def test_composition_supplement_uses_primary_association_fields() -> None:
     assert observed["ci_high"] == 0.03
     assert observed["fdr"] == 0.2
     assert not bool(observed["significant"])
+
+
+@pytest.mark.parametrize(
+    ("scale", "expected"),
+    [("log_odds_per_10_years", "log-odds"), ("fraction_per_10_years", "fraction units")],
+)
+def test_composition_forest_label_matches_recorded_scale(scale: str, expected: str) -> None:
+    frame = pd.DataFrame({"effect_scale": [scale]})
+    assert expected in _composition_effect_xlabel(frame)
+
+
+@pytest.mark.parametrize(
+    "scales", [["unspecified"], ["log_odds_per_10_years", "fraction_per_10_years"]]
+)
+def test_composition_forest_rejects_unknown_or_mixed_units(scales: list[str]) -> None:
+    with pytest.raises(ValueError, match="single supported effect scale"):
+        _composition_effect_xlabel(pd.DataFrame({"effect_scale": scales}))

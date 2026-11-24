@@ -62,6 +62,9 @@ def _prepare_comp_effects(df: pd.DataFrame) -> pd.DataFrame:
     out["ci_low"] = pd.to_numeric(df.get("association_effect_ci_low"), errors="coerce")
     out["ci_high"] = pd.to_numeric(df.get("association_effect_ci_high"), errors="coerce")
     out["fdr"] = pd.to_numeric(df.get("association_fdr"), errors="coerce")
+    out["effect_scale"] = (
+        df["association_effect_scale"] if "association_effect_scale" in df else "unspecified"
+    )
     if "fdr_significant" in df.columns:
         out["significant"] = _safe_bool_series(df["fdr_significant"])
     else:
@@ -142,6 +145,19 @@ def _plot_forest_panel(ax, df: pd.DataFrame, panel_title: str, xlabel: str) -> N
     style_axis(ax, grid="x")
 
 
+def _composition_effect_xlabel(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return "Effect per 10y"
+    scales = set(frame["effect_scale"].dropna()) if "effect_scale" in frame else set()
+    labels = {
+        "log_odds_per_10_years": "Effect per 10y (log-odds)",
+        "fraction_per_10_years": "Effect per 10y (fraction units)",
+    }
+    if len(scales) != 1 or next(iter(scales)) not in labels:
+        raise ValueError("Composition plot needs a single supported effect scale.")
+    return labels[next(iter(scales))]
+
+
 def _plot_effect_ci_forest(
     comp_top: pd.DataFrame,
     sig_top: pd.DataFrame,
@@ -162,7 +178,7 @@ def _plot_effect_ci_forest(
         axes[0],
         comp_top,
         panel_title="Cell-type composition trends",
-        xlabel="Effect per 10y (fraction units)",
+        xlabel=_composition_effect_xlabel(comp_top),
     )
     _plot_forest_panel(
         axes[1],
