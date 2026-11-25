@@ -32,17 +32,13 @@ biological interpretation of the regenerated results is still pending.
 
 ## Superseded Historical Evidence
 
-- [Historical GSE164378 pilot manifest](archive/gse164378_pilot_manifest.md)
-- [Former corrected-results review](corrected_results_review.md)
-- [Former pseudobulk robustness audit](pseudobulk_robustness_audit.md)
 - [Former edgeR runtime qualification](validation/pseudobulk_de_runtime_qualification.md)
 - [Former one-million-cell pseudobulk acceptance](validation/pseudobulk_de_1m_run_acceptance.md)
-- [Former result dispositions](reviews/corrected_results_dispositions.yml)
-- [Former public-promotion record](reviews/corrected_public_promotion_record.md)
 
-These records preserve provenance for the superseded analysis that treated
-sample units as independent. They are historical only and should not be used to
-interpret results from the current workflow.
+These two records document technical execution of the superseded analysis.
+That analysis treated sample units as independent and used an incorrect
+study identifier. The [analysis decisions](analysis_decisions.md) explain
+the corrected study identity and subject-level design used for current results.
 
 Raw data, generated results, trained models, and local execution evidence are
 not versioned. Selected figures used by tracked documentation are stored in

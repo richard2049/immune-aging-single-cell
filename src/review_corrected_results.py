@@ -891,9 +891,8 @@ validated aging clock. Its approved presentation tier is
 ## Promotion State
 
 The machine-readable promotion manifest records the exact authorization state.
-The approved wording and captions are preserved in
-`docs/reviews/corrected_public_promotion_record.md`; generated analytical
-outputs remain separate from curated public assets.
+Keep working wording and captions in the local review record. Copy reviewed
+assets into public documentation only after the wording and assets are approved.
 """
     ensure_dir(path.parent)
     path.write_text(text, encoding="utf-8")
