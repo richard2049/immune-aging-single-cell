@@ -1,0 +1,5 @@
+summary,label,estimate_years,ci95_low_years,ci95_high_years,interval_method,visits,people,outer_folds
+visit_mae,Nested CV selection,12.640348584551813,11.638430088973383,13.626712926426078,participant bootstrap,316,166,5
+visit_mae,Ridge (α = 0.1),12.764120767699435,11.658658909393075,13.876669307415586,participant bootstrap,316,166,5
+visit_mae,Age-only baseline,15.160436692998319,,,none,316,166,5
+paired_fold_mae_difference,Ridge minus nested CV selection,0.12515826827580873,-0.19844505785209704,0.38996626082187974,paired outer-fold bootstrap,316,166,5

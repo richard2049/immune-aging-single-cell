@@ -64,5 +64,7 @@ config/*.local.yml
 !/docs/assets/.gitkeep
 !/docs/assets/blood_age_atlas_composition_effects.png
 !/docs/assets/blood_age_atlas_composition_summary.csv
+!/docs/assets/blood_age_atlas_age_prediction.png
+!/docs/assets/blood_age_atlas_age_prediction_summary.csv
 
 .snakemake/
