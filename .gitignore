@@ -66,5 +66,7 @@ config/*.local.yml
 !/docs/assets/blood_age_atlas_composition_summary.csv
 !/docs/assets/blood_age_atlas_age_prediction.png
 !/docs/assets/blood_age_atlas_age_prediction_summary.csv
+!/docs/assets/blood_age_atlas_cd8_sasp.png
+!/docs/assets/blood_age_atlas_cd8_sasp_summary.tsv
 
 .snakemake/
