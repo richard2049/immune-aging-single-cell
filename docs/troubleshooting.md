@@ -160,7 +160,7 @@ initialization. Keep the security controls enabled and redirect only Numba's
 disposable cache to the ignored workspace directory:
 
 ```powershell
-$numbaCache = Join-Path (Resolve-Path ".tmp").Path "numba-cache"
+$numbaCache = Join-Path $PWD.Path ".tmp/numba-cache"
 New-Item -ItemType Directory -Force -Path $numbaCache | Out-Null
 $env:NUMBA_CACHE_DIR = $numbaCache
 python -c "import scanpy, scvi; print(scanpy.__version__, scvi.__version__)"
