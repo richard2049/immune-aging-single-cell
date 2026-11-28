@@ -1,3 +1,5 @@
+"""Historical reporting for the superseded independent-sample workflow."""
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +13,7 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from scipy import stats
 
+from src.historical_output_paths import validate_historical_outputs
 from src.plot_style import (
     PALETTE,
     apply_publication_style,
@@ -478,7 +481,7 @@ Approved source: `{forest_path}`
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate non-public draft assets from corrected results."
+        description="Generate archival draft assets for the superseded independent-sample analysis."
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--corrected-out", required=True)
@@ -489,6 +492,16 @@ def main() -> None:
     parser.add_argument("--manifest-out", required=True)
     parser.add_argument("--record-out", required=True)
     args = parser.parse_args()
+    try:
+        validate_historical_outputs(
+            args.composition_out,
+            args.prediction_out,
+            args.forest_out,
+            args.manifest_out,
+            args.record_out,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     config = load_config(args.config)
     corrected_out = Path(args.corrected_out)

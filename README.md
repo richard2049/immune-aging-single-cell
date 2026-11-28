@@ -1,487 +1,80 @@
 # Immune Aging Single-Cell
 
-[![CI](https://github.com/richard2049/immune-aging-single-cell/actions/workflows/ci.yml/badge.svg)](https://github.com/richard2049/immune-aging-single-cell/actions/workflows/ci.yml)
+How does the cellular composition of human blood change with age, and how much
+age information can we recover from single-cell RNA profiles?
 
-Modular Snakemake pipeline for PBMC single-cell RNA-seq analysis focused on immune aging.
+This project reanalyzes the Blood Age Atlas using a reproducible Snakemake
+workflow. It accounts for repeated blood draws from the same person and
+distinguishes cell frequencies, RNA associations, and prediction performance.
 
-Stack: `scanpy` + `scvi-tools` + `CellTypist`.
+[![CI on main](https://github.com/richard2049/immune-aging-single-cell/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/richard2049/immune-aging-single-cell/actions/workflows/ci.yml)
 
-Reviewed Blood Age Atlas results include [composition](#composition),
-[internal age prediction](#internal-age-prediction), and a
-[CD8 T-cell RNA signature](#cd8-t-cell-rna-signature).
+The source atlas includes **317 visits from 166 people aged 25–85**. The
+maintained profile selected **1 million cells** from the deposited PBMC count
+matrix. Composition and prediction each used **316 visits from 166 people**.
+Eligibility varies by analysis. [Study and data access](docs/real_data.md#blood-age-atlas-inputs)
 
-## Key Properties
-- Reproducible, config-driven workflow design (`Snakemake` + YAML configs).
-- Memory-safe single-cell processing (sparse counts, no dense graph conversion).
-- Standard single-cell analysis stages: QC, doublet removal, scVI latent
-  modeling, clustering, and automated annotation.
-- Structured, inspectable outputs: `.h5ad` intermediates, figures, and summary
-  tables.
+## Selected results
 
-## Documentation
-- [Documentation index](docs/README.md)
-- [Analysis decisions](docs/analysis_decisions.md)
-- [Real-data guide](docs/real_data.md)
-- [Scientific verification contract](docs/verification_contract.md)
+| Question | Reviewed finding |
+| --- | --- |
+| Which immune-cell fractions vary with age? | Older age was associated with lower relative MAIT and CD8 T-cell fractions and higher non-classical monocyte and regulatory T-cell fractions. For all four, estimates pointed in the same direction and met a 5% false discovery rate cutoff in both analyses. |
+| How accurately can RNA profiles predict chronological age? | Mean absolute error was 12.64 years per visit in internal evaluation. Folds were grouped by person and scVI learned from the full cohort. The paired comparison with Ridge was uncertain. |
+| Does a senescence-related RNA score vary with age in CD8 T cells? | A pooled nine-gene score had a positive association in the primary and one-visit analyses. The score measures RNA expression and cannot establish cellular senescence or protein secretion. |
 
-## Pipeline
-1. `ingest` -> `results/01_raw.h5ad`
-2. `metadata` -> `results/01_meta.h5ad` (obs ID parsing + optional external metadata merge)
-3. `qc` -> `results/02_qc.h5ad`
-4. `doublets` (SOLO) -> `results/03_nodoublets.h5ad`
-5. `scvi_train` -> `results/04_scvi.h5ad` + `results/models/scvi_model/`
-6. `cluster` -> `results/05_clustered.h5ad`
-7. `annotate` (CellTypist) -> `results/06_annotated.h5ad`
-8. `report` -> figures + tables + `results/reports.done`
-9. `composition_age` -> age-stratified composition figures + trend tables
-10. `signature_age` -> sample-level signature trends with subject-clustered inference
-11. `age_prediction` -> chronological age prediction with subject-grouped cross-validation
-12. `sensitivity_age` -> parameter-sensitivity runs for age analyses
-13. `supplementary_age` -> supplementary summary figures for effect sizes and stability
+![Adjusted composition estimates and 95% confidence intervals for ten populations, comparing all eligible visits with one visit per person](docs/assets/blood_age_atlas_composition_effects.png)
 
-## Quickstart (Demo)
+*Composition effects are adjusted log-odds per decade. The estimates describe
+relative cell fractions in this cohort. The one-visit check reuses the same
+cohort, and both analyses estimate population-level age associations.*
+
+Explore the [age-prediction figure](RESULTS.md#internal-chronological-age-prediction)
+and the [CD8 RNA signature figure](RESULTS.md#cd8-t-cell-rna-signature).
+The [full results](RESULTS.md) include estimates, intervals, source tables, and
+the status of the pseudobulk analysis.
+
+## How the analysis works
+
+The accepted run uses scVI, clustering, and CellTypist, with checkpoint and
+annotation review before downstream models. The one-million-cell profile
+passed cells through local QC and SOLO stages without additional filtering.
+
+```mermaid
+flowchart TD
+    A["Blood Age Atlas count matrix and metadata"] --> B["1 million cells selected and joined to metadata"]
+    B --> C["scVI and clustering checkpoint checks"]
+    C --> D["CellTypist and approved analysis labels"]
+    D --> E["Visits identified by Tube_id"]
+    D --> L["Multiplexed libraries identified by File_name"]
+    E --> F["Repeated visits grouped by Donor_id"]
+    F --> G["Composition and RNA signatures"]
+    F --> H["Internal chronological age prediction"]
+    F --> I["Pseudobulk inference"]
+```
+
+See the [analysis decisions](docs/analysis_decisions.md), [verification contract](docs/verification_contract.md),
+and [pseudobulk design](docs/pseudobulk_de_design.md).
+
+## Run the demo
+
 ```bash
 conda env create -f environment.yml
 conda activate immune-aging-scvi
-
-snakemake -s workflows/Snakefile -c 1 --configfile config/demo.yaml
-```
-
-For an existing environment, apply the tracked dependency contract explicitly:
-
-```powershell
-$mamba = Join-Path ((conda info --base).Trim()) "Library\bin\mamba.exe"
-if (-not (Test-Path $mamba)) { throw "mamba.exe not found at $mamba" }
-& $mamba env update -n immune-aging-scvi -f environment.yml --prune
-if ($LASTEXITCODE -ne 0) { throw "Environment update failed; do not run validation in the stale environment." }
-conda activate immune-aging-scvi
-python -c "import scanpy, scvi, celltypist, xgboost; print(scanpy.__version__, scvi.__version__, celltypist.__version__, xgboost.__version__)"
-if ($LASTEXITCODE -ne 0) { throw "Required scientific packages are unavailable." }
-```
-
-The update can require a full dependency solve. Do not run it concurrently with
-Snakemake or another conda operation. If channel downloads fail, follow the
-network checks in `docs/troubleshooting.md`; do not continue with workflow
-validation in the stale environment.
-
-### Optional NVIDIA GPU Environment
-
-`environment.yml` is the portable CPU contract used by CI. On a supported
-NVIDIA system, create the separately qualified CUDA 12.1 environment:
-
-```powershell
-conda env create -n immune-aging-scvi-gpu -f environment-gpu.yml
-conda activate immune-aging-scvi-gpu
-python -c "import torch, scvi; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
-```
-
-The CUDA-enabled PyTorch build can execute either backend. Select `cpu` or
-`gpu` through `scvi.accelerator` in the local config used for the run; changing
-the accelerator does not replace the accepted seed, covariates, or input
-contract. Qualify both modes with a bounded smoke test before a large run and
-use a CPU profile when CUDA is unavailable. See
-[`docs/troubleshooting.md`](docs/troubleshooting.md#gpu-training) for the
-driver and runtime checks.
-
-Windows/PowerShell equivalent:
-```powershell
 python -m snakemake -s workflows/Snakefile -c 1 --configfile config/demo.yaml
 ```
 
-Run a specific target:
-```powershell
-python -m snakemake -s workflows/Snakefile -c 1 age_prediction --configfile config/blood_age_atlas_pilot.yaml
-```
-
-## Maintenance Rebuilds
-
-The demo command above is a smoke-test path, not a rebuild of the Blood Age
-Atlas analysis. The maintained real-data path has two sequential stages:
-
-1. `workflows/Snakefile` reconstructs and validates the one-million-cell scVI
-   checkpoint, creates and validates the clustered checkpoint, and only then
-   runs annotation under `results/blood_age_atlas_1m/`.
-2. `workflows/Snakefile.longitudinal` applies the explicit subject, sample-unit,
-   and technical-library contract and writes downstream outputs under
-   `results/blood_age_atlas_longitudinal/`.
-
-Directories beginning with `results/gse164378` are historical checkpoints from
-before the study-identity correction. They are not output targets and must not
-be overwritten or treated as current evidence.
-
-Run the following from the repository root in an activated
-`immune-aging-scvi` environment. Keep `-c 1` for the conservative memory-safe
-route, do not run the two Snakemake commands concurrently, and ensure Docker
-Desktop is available for the pinned `dream` stage.
-
-```powershell
-$numbaCache = Join-Path $PWD.Path ".tmp/numba-cache"
-New-Item -ItemType Directory -Force -Path $numbaCache | Out-Null
-$env:NUMBA_CACHE_DIR = $numbaCache
-
-$requiredInputs = @(
-    "data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad",
-    "data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv"
-)
-
-foreach ($path in $requiredInputs) {
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Required input not found: $path"
-    }
-}
-
-docker --context desktop-linux image inspect `
-    immune-aging-dream:bioc-3.23-dream-1.42.0 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "The pinned dream Docker image is unavailable."
-}
-
-$logDir = "results/logs"
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$logPath = Join-Path $logDir (
-    "maintenance_rebuild_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss")
-)
-
-Start-Transcript -Path $logPath
-try {
-    python -m snakemake `
-        -s workflows/Snakefile `
-        -c 1 `
-        scvi_train `
-        --configfile config/blood_age_atlas_1m.yaml `
-        --rerun-incomplete `
-        --printshellcmds
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "scVI reconstruction failed; do not continue."
-    }
-
-    python -m src.validate_scvi_checkpoint `
-        --config config/blood_age_atlas_1m.yaml `
-        --inp results/blood_age_atlas_1m/03_nodoublets.h5ad `
-        --checkpoint results/blood_age_atlas_1m/04_scvi.h5ad `
-        --report results/blood_age_atlas_1m/validation/04_scvi_checkpoint.json
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "The scVI checkpoint gate failed; do not run clustering."
-    }
-
-    python -m snakemake `
-        -s workflows/Snakefile `
-        -c 1 `
-        cluster `
-        --configfile config/blood_age_atlas_1m.yaml `
-        --rerun-incomplete `
-        --printshellcmds
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Clustering failed; do not run annotation."
-    }
-
-    python -m src.validate_cluster_checkpoint `
-        --config config/blood_age_atlas_1m.yaml `
-        --inp results/blood_age_atlas_1m/04_scvi.h5ad `
-        --checkpoint results/blood_age_atlas_1m/05_clustered.h5ad `
-        --report results/blood_age_atlas_1m/validation/05_cluster_checkpoint.json
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "The clustered checkpoint gate failed; do not run annotation."
-    }
-
-    python -m snakemake `
-        -s workflows/Snakefile `
-        -c 1 `
-        annotate `
-        --configfile config/blood_age_atlas_1m.yaml `
-        --rerun-incomplete `
-        --printshellcmds
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Annotation failed; do not run the longitudinal stage."
-    }
-
-    python -m snakemake `
-        -s workflows/Snakefile.longitudinal `
-        -c 1 `
-        --configfile config/blood_age_atlas_longitudinal.yaml `
-        --rerun-incomplete `
-        --printshellcmds
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "The longitudinal workflow failed."
-    }
-}
-finally {
-    Stop-Transcript
-}
-```
-
-The workspace-scoped Numba cache avoids writes to protected environment or
-user-cache directories on Windows. It contains disposable compiled cache
-files only and is excluded from version control. See
-[`docs/troubleshooting.md`](docs/troubleshooting.md#windows-cache-permissions)
-if Scanpy or scVI stalls during import.
-
-The longitudinal `all` target includes unit mapping, scientific checkpoint
-audit, outcome-blind annotation and design qualification, subject-aware
-composition and signature models, subject-grouped age prediction, pseudobulk
-aggregation, `dream` repeated-measures inference, the pre-specified
-one-sample-per-subject sensitivity, and technical validation.
-Snakemake normally reruns only incomplete or out-of-date jobs. Do not use
-`--forceall` when rebuilding checkpoints because it would recompute stages
-outside the intended scope.
-
-Before the first inferential run, generate only the review evidence:
-
-```powershell
-python -m snakemake `
-    -s workflows/Snakefile.longitudinal `
-    -c 1 `
-    annotation_design_qualification `
-    --configfile config/blood_age_atlas_longitudinal.yaml `
-    --printshellcmds
-```
-
-Follow the human-review procedure in
-[`docs/annotation_mapping_review_guide.md`](docs/annotation_mapping_review_guide.md).
-Use `docs/reviews/annotation_mapping_review.yml` to record conclusions and the
-generated `validation/annotation_mapping_review_table.csv` as the compact
-evidence index. The full workflow stops until every mapping row has been
-reviewed and the generated approval file matches both the mapping and its
-qualification report.
-
-Run the longitudinal workflow only after the reconstructed scVI and clustered
-checkpoint gates pass and `results/blood_age_atlas_1m/06_annotated.h5ad` is
-complete. Its first rules run the configured scientific checkpoint audit and
-annotation qualification. Inspect all validation reports and do not publish
-regenerated results or claims without independent scientific review.
-
-## Validation
-Use the project conda environment before running workflow checks. The tracked
-environment is CPU-first for portability.
-
-```powershell
-python -m compileall src workflows
-python -m unittest discover -s tests -v
-python -m snakemake -s workflows/Snakefile -c 1 -n --configfile config/demo.yaml
-```
-
-GitHub Actions applies the same Ruff and compilation checks, runs the unit-test
-suite in the tracked scientific environment, and constructs the demo workflow
-DAG. Docker-qualified `dream` tests, real-data execution, and full analysis runs
-remain explicit validation steps outside routine CI. A passing CI run confirms
-the automated technical checks only; it does not establish biological validity.
-
-Development-only linting is kept outside the scientific runtime environment:
-
-```powershell
-$base_python = Join-Path ((conda info --base).Trim()) "python.exe"
-& $base_python -m venv .venv-dev
-$dev_python = Join-Path (Resolve-Path ".venv-dev") "Scripts\python.exe"
-& $dev_python -m pip install -r requirements-dev.txt
-& $dev_python -m ruff check src tests workflows
-& $dev_python -m ruff format --check src tests workflows
-```
-
-The optional GPU profile is not exercised by GitHub Actions because hosted and
-local GPU drivers are machine-specific. Its scientific Python versions match
-the CPU contract, while the PyTorch backend is qualified separately.
-
-## Blood Age Atlas Analysis Status
-
-The analysed study is the Terekhova et al. Blood Age Atlas distributed through
-Synapse as `syn49637038`, not GEO accession `GSE164378`. Source metadata describe
-317 sample units from 166 people. The workflow assigns distinct roles to
-`subject_id` (`Donor_id`), `sample_unit_id` (`Tube_id`), and
-`technical_library_id` (`File_name`).
-
-Earlier downstream outputs referred to the study by the wrong accession and
-treated repeated samples from the same person as independent observations.
-They are retained for provenance only and are not used in the current analyses
-or figures. Updated results must come from rebuilt checkpoints, pass the
-repository's technical validation checks, and undergo scientific review.
-
-Composition and signature models account for repeated samples from the same
-person, and prediction folds are grouped by subject. Because scVI is fitted to
-the full cohort before cross-validation, prediction performance represents
-internal, transductive validation rather than evaluation in a wholly unseen
-cohort. Pseudobulk inference uses a subject random intercept and a separate,
-deterministic one-sample-per-subject sensitivity. Gene-level pseudobulk
-interpretation remains under review.
-
-### Composition
-
-The composition analysis uses 316 visits from 166 people in the
-[Terekhova et al. Blood Age Atlas](https://doi.org/10.1016/j.immuni.2023.10.013).
-Inputs are the [raw-count archive](https://www.synapse.org/Synapse:syn56693935)
-and metadata from the [PBMC archive](https://www.synapse.org/Synapse:syn51197006).
-
-The primary binomial GEE adjusts for sex and batch and accounts for repeated
-visits within people. The sensitivity analysis uses the earliest eligible visit
-per person, breaking ties by sample ID. The covariance correction changed the
-sensitivity uncertainty and adjusted p-values, not the effect estimates or the
-primary results. Fractions use all QC-passed cells as the denominator, including
-`Other/unresolved` cells, which are not tested as a separate population.
-
-Four of the ten tested populations had concordant directions and FDR below 0.05
-in both analyses: lower MAIT and CD8 T-cell fractions and higher non-classical
-monocyte and regulatory T-cell fractions at older ages. Classical monocytes
-and NK cells met this threshold only in the primary analysis. These are
-associations within this cohort, not within-person or causal effects. The
-sensitivity analysis helps assess how robust these associations are, not how
-biologically important they are.
-
-![Primary and one-visit sensitivity composition effect estimates](docs/assets/blood_age_atlas_composition_effects.png)
-
-**Adjusted associations with age.** Points show sex- and batch-adjusted
-log-odds estimates per 10-year difference in age, not percentage-point changes.
-Bars show nominal 95% robust confidence intervals. Blue estimates use all
-eligible visits; orange estimates use one visit per person. Both analyses use
-the same cohort, so their agreement is a sensitivity check, not independent
-replication. The [aggregate composition table](docs/assets/blood_age_atlas_composition_summary.csv)
-reports all ten populations, support counts, and separate Benjamini-Hochberg
-FDR values for the two analyses.
-
-### Internal age prediction
-
-![Visit-level mean absolute errors of 12.64 years for nested cross-validation, 12.76 for Ridge, and 15.16 for the age-only baseline.](docs/assets/blood_age_atlas_age_prediction.png)
-
-**Internal chronological age prediction in the Blood Age Atlas.** The analysis
-used 316 visits from 166 people. In the five outer folds, all visits from each
-person were held out together. The nested cross-validation (CV) procedure
-selected models in grouped inner folds within each outer training set. Mean
-absolute error (MAE) was measured once per held-out visit. Ridge (α = 0.1) had the
-lowest overall visit-level MAE among the Ridge settings evaluated on those same
-outer folds. The age-only baseline predicted the mean of the training
-participants' median ages in each fold, computed from the eligible
-visit-by-cell-type training rows.
-
-Error bars show 95% participant-bootstrap intervals. The age-only baseline is
-shown as a point estimate. Across the five paired outer folds, Ridge MAE minus
-nested-CV MAE averaged 0.13 years (descriptive 95% fold-bootstrap interval,
-−0.20 to 0.39 years). The interval spans zero, leaving the performance
-difference uncertain. scVI was fitted once on cells from the full cohort,
-including people later held out from the age models. The comparison describes
-internal performance with a shared representation. The plotted values and
-paired comparison are available in the [aggregate prediction table](docs/assets/blood_age_atlas_age_prediction_summary.csv).
-
-### CD8 T-cell RNA signature
-
-![Sex- and batch-adjusted age associations for the CD8 RNA score across repeated visits and with one visit per person.](docs/assets/blood_age_atlas_cd8_sasp.png)
-
-**Age association of the pooled CD8 T-cell SASP proxy in the Blood Age Atlas.**
-This is one example from 40 signature-by-cell-type tests. The score averages
-normalized, log-transformed RNA expression for nine genes across the selected
-CD8 T cells at each visit. In the model adjusted for sex and batch, a ten-year
-difference in age was associated with a 0.00059-unit higher score (95% CI
-0.00027 to 0.00090) across 309 visits from 162 people. The model accounted for
-repeated visits within each person.
-
-The one-visit sensitivity analysis used the same cohort and adjusted for sex
-and batch. The estimate was positive across 161 visits from 161 people
-(+0.00108 score units per decade, 95% CI 0.00064 to 0.00151). The prespecified
-visit rule selected an earlier visit without an eligible CD8 score for one
-person who contributed a later visit to the primary analysis. Bars show 95%
-confidence intervals.
-
-In an exploratory decomposition, the observed mix of annotated CD8 groups
-reproduced most of the pooled coefficient with both fixed-expression
-references. The estimated share and the sign of the remainder depended on
-the reference. The interpretation is limited to the pooled RNA score in
-this cohort. The [aggregate signature table](docs/assets/blood_age_atlas_cd8_sasp_summary.tsv)
-gives both plotted estimates and the false discovery rate values for their
-respective analyses.
-
-### Source tables for the figures
-
-Use the [longitudinal workflow](#maintenance-rebuilds) and its validated
-annotation checkpoint to produce the tables below. Paths are relative to the
-configured results directory.
-
-- Composition uses the primary and one-visit estimates in
-  `tables/age_celltype_trend_stats.csv`.
-- Internal prediction uses `tables/age_pred_metrics.csv` and the visit-level
-  paired comparison in `tables/age_pred_model_comparison_summary.csv`.
-- The CD8 figure uses the `CD8 T cells` and `sasp_proxy` row of
-  `tables/signature_age_associations.csv`.
-
-## Report Outputs
-Generated by `src/report.py`:
-- `results/figures/umap_leiden.png`
-- `results/figures/umap_cell_type.png`
-- `results/figures/qc_distributions.png`
-- `results/figures/cell_type_composition.png`
-- `results/tables/cell_type_counts.csv`
-- `results/tables/cell_type_fractions.csv`
-- `results/tables/cluster_celltype_crosstab.csv`
-
-Generated by `src/composition_age.py`:
-- `results/figures/age_celltype_composition_by_bin.png`
-- `results/figures/age_celltype_top_trends.png`
-- `results/tables/age_celltype_fraction_by_sample_unit.csv`
-- `results/tables/age_celltype_trend_stats.csv`
-
-Generated by `src/signature_age.py`:
-- `results/figures/signature_age_heatmap.png`
-- `results/figures/signature_age_top_associations.png`
-- `results/tables/signature_scores_by_sample_unit_celltype.csv`
-- `results/tables/signature_age_associations.csv`
-- `results/tables/signature_gene_coverage.csv`
-
-Generated by `src/age_prediction.py`:
-- `results/figures/age_pred_observed_vs_predicted.png`
-- `results/figures/age_pred_mae_by_celltype.png`
-- `results/tables/age_pred_cv_predictions.csv`
-- `results/tables/age_pred_metrics.csv`
-- `results/tables/age_pred_model_comparison_summary.csv`
-  - `age_pred_metrics.csv` compares candidate models under identical
-    subject-grouped cross-validation folds and subject-clustered bootstrap
-    intervals.
-  - `age_pred_model_comparison_summary.csv` adds fold-level winner counts and bootstrap CI for paired MAE deltas vs best Ridge.
-
-Generated by `src/sensitivity_age.py`:
-- `results/sensitivity_age/sensitivity_manifest.csv`
-- `results/sensitivity_age/sensitivity_summary.csv`
-
-Generated by `src/supplementary_age_plots.py`:
-- `results/figures/supp_age_effect_ci_forest.png`
-- `results/figures/supp_age_sensitivity_stability.png`
-
-## Real-Data Mode
-Copy `config/custom.example.yaml` to an ignored local profile before adapting
-it to a new dataset:
-
-```powershell
-Copy-Item config/custom.example.yaml config/custom.local.yaml
-```
-
-Set `cfg_path: config/custom.local.yaml`, then review the input path, metadata
-schema, subject/sample/library fields, covariates, thresholds, and output
-directory. The tracked Blood Age Atlas profiles record fixed study runs and are not
-generic templates.
-
-Detailed schema and ingestion notes are in `docs/real_data.md`; profile roles
-and inheritance are documented in `docs/configuration.md`.
-
-## Notes
-- Default configs use CPU for portability on Windows/macOS/Linux and match the
-  CPU-only PyTorch environment in `environment.yml`. The optional
-  `environment-gpu.yml` can run those same profiles on CPU or a locally
-  qualified NVIDIA GPU.
-- Large data files and `results/` are gitignored.
-- Use `config/blood_age_atlas_pilot.yaml` for the bounded 50,000-cell Blood Age
-  Atlas smoke run and `config/blood_age_atlas_1m.yaml` for the one-million-cell
-  checkpoint. An uncapped analysis is not currently a tracked run profile.
-- Store figures referenced by the README under `docs/assets/`
-  (`.png/.jpg/.jpeg/.webp`).
-- Keep `.snakemake/`, raw downloads, and generated artifacts out of version control.
-
-## Citation
-Citation metadata for release `v0.1.0` is provided in
-[`CITATION.cff`](CITATION.cff).
-
-## License
-Unless otherwise noted, original code and documentation in this repository are
-available under the [BSD 3-Clause License](LICENSE). External datasets,
-pretrained models, and third-party software remain subject to their original
-licenses and terms.
+PBMC3K tests workflow execution. It lacks the participant and age design needed
+for immune-aging inference. See the [runbook](docs/reproducibility.md) for
+Windows and GPU setup, real-data rebuilds, output paths, and validation commands.
+
+## Documentation and citation
+
+- [Documentation index](docs/README.md)
+- [Data access and metadata](docs/real_data.md)
+- [Profiles and method settings](docs/configuration.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Citation metadata for the software release](CITATION.cff)
+
+Original code and documentation use the [BSD 3-Clause License](LICENSE).
+External datasets, pretrained models, and third-party software have their
+own terms.

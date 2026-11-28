@@ -63,13 +63,6 @@ Before running, verify:
 - Use CPU defaults first; switch to GPU only after installing and validating a
   CUDA-enabled PyTorch build.
 
-## Optional Ingestion Extension (Next Step)
-A future `src/ingest_real.py` can automate:
-1. download from GEO/HCA/source bucket,
-2. convert to standardized `.h5ad`,
-3. validate required `obs`/`var` fields,
-4. write provenance metadata (source URL, accession, date).
-
 ## Build Unit Metadata
 
 `src.biological_replicates` builds the maintained cell-to-unit mapping from an
@@ -79,28 +72,48 @@ mapping rejects duplicate cell keys, missing required values, sample-to-subject
 conflicts, inconsistent age/sex/batch within a sample, and unexpected cohort
 counts. Derived mappings must be written outside `data/raw`.
 
-## Data Source Notes (Important)
-- The current Blood Age Atlas count archive does not include every required
-  longitudinal field directly in `obs`.
-- For age analyses, you need an additional donor-level clinical file (age/sex/etc.).
-- The Immunity 2023 healthy blood atlas is distributed via Synapse/AWS resources; download the companion donor metadata/clinical file and pass it as `--supp`.
+## Blood Age Atlas inputs
 
-### Getting Supplementary Donor Metadata
-Synapse access is optional and credentialed. `synapseclient` is intentionally
-not required for the core analysis environment unless you are acquiring data
-from Synapse. Use a Synapse profile or a local `SYNAPSE_AUTH_TOKEN`
-environment variable; do not store tokens in the repository.
+The [source study](https://pubmed.ncbi.nlm.nih.gov/37963457/) describes
+317 blood-sample units from 166 people aged 25?85. The
+[Synapse study record](https://www.synapse.org/Synapse:syn49637038) and
+[AWS registry record](https://registry.opendata.aws/singlecellhumanbloodatlas/)
+describe the distribution and access conditions.
 
-Dry-run metadata discovery:
+| Archive | Required local file in the tracked profile |
+| --- | --- |
+| [Raw counts, syn56693935](https://www.synapse.org/Synapse:syn56693935) | `data/raw/raw_counts_h5ad/pbmc_gex_raw_with_var_obs.h5ad` |
+| [Companion PBMC archive, syn51197006](https://www.synapse.org/Synapse:syn51197006) | `data/raw/raw_counts_h5ad/all_pbmcs/all_pbmcs_metadata.csv` |
+
+Follow Synapse's access conditions and compare downloads to the checksums
+provided for the selected file versions where available. Keep original
+archives and credentials outside Git. The core workflow reads local files.
+The optional download helper uses a Synapse profile or a local
+`SYNAPSE_AUTH_TOKEN` and can list metadata candidates before any download.
+
 ```powershell
-python -m src.fetch_synapse_metadata --entity-id syn56693935 --recursive --limit 20
+python -m src.fetch_synapse_metadata --entity-id syn51197006 --recursive --limit 20
 ```
 
-Download only metadata-like matches after reviewing the dry-run output:
-```powershell
-python -m src.fetch_synapse_metadata --entity-id syn56693935 --recursive --download --limit 5
-```
+The accepted profile joins cell identifiers to companion metadata to recover
+`Donor_id`, `Tube_id`, and `File_name`. Library identifiers record technical
+provenance. A multiplexed library may contain cells from multiple sample
+units and people. Check the archive versions, join key, and unit columns
+before using replacement inputs. [Profile and schema](configuration.md#longitudinal-unit-contract)
 
-Before using a newly downloaded table, identify and document its cell join key,
-subject, sample-unit, and technical-library fields. Do not substitute one role
-for another based only on a name or apparent uniqueness.
+### Cell retention in the accepted profile
+
+The archived count matrix contained 1,916,367 cells. The profile selected one
+million cells and retained them through metadata, scVI, clustering, and
+annotation. The source-study code uses genotype-based demultiplexing with
+souporcell and includes downstream preprocessing. The exact upstream QC and
+doublet filters applied to this specific deposited count matrix have
+incomplete file-level provenance.
+[Source demultiplexing workflow](https://github.com/teresho4/scRNA-seq_atlas_Hs_PBMC_aging/blob/main/Demultiplexing_pipeline/Snakefile)
+
+The accepted local profile disabled QC filtering and SOLO doublet detection.
+The intermediate checkpoint names describe workflow positions. The
+composition denominator contains 999,766 retained cells across the 316
+eligible visits, including cells labeled `Other/unresolved`. Signature,
+pseudobulk, and prediction models apply their own support rules.
+[Reviewed results and support](../RESULTS.md)

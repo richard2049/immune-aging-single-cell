@@ -11,9 +11,9 @@ not GEO accession `GSE164378`. Source `Donor_id` identifies the subject,
 technical library. Cells and repeated sample units from one subject are not
 independent people.
 
-Historical analyses promoted `Tube_id` to an independent biological replicate.
-Those numerical results and presentation decisions are superseded and remain
-non-promotable until the current workflow is regenerated and reviewed.
+Historical analyses treated `Tube_id` as an independent biological replicate.
+Those numerical results are retained for provenance. The reviewed results use
+the corrected participant-aware workflow. [Current results](../RESULTS.md)
 
 ## Composition And Signatures
 
@@ -64,7 +64,10 @@ separate and require technical validation before gene-level review.
 New checkpoints and outputs use `blood_age_atlas` namespaces. Historical
 `results/gse164378*` directories are immutable provenance. The longitudinal
 workflow no longer invokes historical comparison, disposition, or public-asset
-generators.
+generators. The historical `review_corrected_results` and
+`draft_corrected_public_assets` commands are retained for archival review.
+Use [the reviewed aggregate renderer](../RESULTS.md#figure-and-analysis-provenance)
+for current figures.
 
 Passing technical checks is necessary but not sufficient for biological
 interpretation. Conclusions about cell populations, genes, pathways,
@@ -77,3 +80,12 @@ The primary estimand is a population-level association with chronological age
 while accounting for repeated observations. It is not a within-person ageing
 effect. The data and models do not establish causality, biological age,
 diagnostic performance, or clinical utility.
+
+## Method references
+
+- Participant dependence and replicate-aware inference.
+  [Zimmerman et al., 2021](https://www.nature.com/articles/s41467-021-21038-1) ? [Squair et al., 2021](https://www.nature.com/articles/s41467-021-25960-2)
+- Repeated-measures expression models.
+  [Hoffman and Roussos, 2021](https://academic.oup.com/bioinformatics/article/37/2/192/5878955)
+- Single-cell workflow design and study-specific quality control.
+  [Heumos et al., 2023](https://pmc.ncbi.nlm.nih.gov/articles/PMC10066026/)
