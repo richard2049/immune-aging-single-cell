@@ -33,8 +33,9 @@
 
 ## Composition
 
-- The primary Blood Age Atlas composition denominator retains every QC-passed
-  cell. Cells without an approved primary analysis label contribute only to the
+- The primary Blood Age Atlas composition denominator includes every retained
+  cell in each eligible visit. For the accepted one-million-cell profile, the
+  local QC and SOLO stages passed cells through. Cells without an approved primary analysis label contribute only to the
   derived `Other/unresolved` denominator category; raw and exploratory labels
   remain preserved and `Other/unresolved` is not tested as a biological
   population.

@@ -1,3 +1,5 @@
+"""Historical reporting for the superseded independent-sample workflow."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.historical_output_paths import validate_historical_outputs
 from src.utils import ensure_dir, load_config
 
 ASSOCIATION_GROUP = "biological_replicate_id"
@@ -1003,7 +1006,7 @@ def build_promotion_manifest(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=("Build a traceable, non-promotional review of corrected results.")
+        description=("Build an archival review of the superseded independent-sample analysis.")
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--corrected-out", required=True)
@@ -1012,6 +1015,12 @@ def main() -> None:
     parser.add_argument("--promotion-out", required=True)
     parser.add_argument("--report-out", required=True)
     args = parser.parse_args()
+    try:
+        validate_historical_outputs(
+            args.evidence_out, args.summary_out, args.promotion_out, args.report_out
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     config = load_config(args.config)
     corrected_out = Path(args.corrected_out)

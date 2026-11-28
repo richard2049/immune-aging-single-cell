@@ -38,8 +38,9 @@ $devPython = Join-Path (Resolve-Path ".venv-dev") "Scripts\python.exe"
 Run the smallest checks relevant to the change. The standard fast checks are:
 
 ```powershell
-python -m unittest discover -s tests -v
-python -m compileall -q src
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m compileall -q src workflows
 & $devPython -m ruff check src tests workflows
 & $devPython -m ruff format --check src tests workflows
 ```

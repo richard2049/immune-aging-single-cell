@@ -7,6 +7,7 @@ without relying on generated result directories.
 ## Running the workflow
 
 - [Project overview and quickstart](../README.md)
+- [Reproduction runbook and validation evidence](reproducibility.md)
 - [Configuration profiles](configuration.md)
 - [Real-data ingestion and metadata](real_data.md)
 - [Troubleshooting](troubleshooting.md)
@@ -20,15 +21,21 @@ without relying on generated result directories.
 - [Pseudobulk differential-expression design](pseudobulk_de_design.md)
 - [Pseudobulk differential-expression workflow](pseudobulk_de.md)
 
-## Current Validation
+## Reviewed results
+
+The public results cover composition, internal age prediction, and one CD8
+RNA signature. Each includes the estimand, uncertainty, and interpretation
+limits. [Results and aggregate provenance](../RESULTS.md)
+
+## Technical qualification
 
 The reconstructed scVI, clustering, and CellTypist checkpoints passed their
 configured identity, provenance, and output gates. The approved annotation
 mapping then qualified ten broad primary populations for method-specific use.
 Subject-aware composition, signature, prediction, sensitivity, and pseudobulk
 stages have completed, and the bounded and full `dream` runs pass technical
-validation. These checks establish traceability and technical validity, but
-biological interpretation of the regenerated results is still pending.
+validation. Pseudobulk gene and pathway interpretation and the remaining signature and
+sensitivity outputs await scientific review.
 
 ## Superseded Historical Evidence
 
